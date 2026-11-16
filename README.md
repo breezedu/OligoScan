@@ -223,6 +223,68 @@ This is not a knock on bowtie2, which is an excellent read mapper doing the
 job it was designed for. Its multiseed filter is documented as heuristic,
 and 21-mers at 4–6 errors are outside the regime it targets.
 
+### Against RIsearch2
+
+RIsearch2 (Alkan et al., *NAR* 2017) is the closest tool by purpose: a
+suffix-array seed-and-extend engine built for large-scale siRNA off-target
+prediction. It answers a different question — where a duplex is energetically
+favourable, not where an oligo aligns within an error budget — so three
+adjustments are needed before the numbers mean anything, and
+`scripts/bench_risearch.py` applies all three explicitly:
+
+- **G:U wobble.** RIsearch2 pairs G:U by default, so a "perfect seed" can be
+  almost entirely wobbles. `--noGUseed` is always set. oligoscan counts G:U
+  as a mismatch, so the two still are not identical.
+- **Local vs full-length.** RIsearch2 reports the energy-optimal *local*
+  duplex. In a planted-site control, a 19/19 alignment with 2 mismatches came
+  back as a 16-nt duplex with 1 unpaired base at shifted coordinates.
+  Matching is therefore by **locus** (same transcript, ≥ half the guide
+  overlapping), which is *generous to RIsearch2*.
+- **Energy, not edits.** The `-e` threshold has no principled value for
+  enumeration, so it is swept rather than chosen.
+
+100 library 19-mers, whole human cDNA, 22 threads, gate seed-perfect /
+≤4 edits / 2 bulge bases (196,433 sites). Recall is of oligoscan's output,
+so no recall figure is meaningful for oligoscan itself:
+
+| `-e` | 0 edits | 1 | 2 | 3 | 4 | all | unmatched interactions | RIsearch2 | oligoscan |
+|---|---|---|---|---|---|---|---|---|---|
+| −30 | 60.8% | 38.9% | 27.0% | 6.3% | 1.2% | **2.5%** | 3,681 | 44.6 s | **14.6 s** |
+| −25 | 99.4% | 62.8% | 49.5% | 21.1% | 9.2% | **11.5%** | 76,836 | 46.0 s | **14.6 s** |
+| −20 (default) | 100% | 73.5% | 64.4% | 37.9% | 24.9% | **27.2%** | 652,043 | 46.3 s | **14.6 s** |
+| −15 | 100% | 86.7% | 70.7% | 53.5% | 40.2% | **42.4%** | 2,521,758 | 46.2 s | **14.6 s** |
+| −10 | 100% | 86.7% | 71.1% | 57.3% | 48.2% | **49.8%** | 5,178,169 | 47.0 s | **14.6 s** |
+
+**RIsearch2 is fast, and the case against it is not speed.** Three to nine
+times slower here, not three orders of magnitude — and that excludes a
+one-time 292 s index build producing an 11.9 GB suffix array, where oligoscan
+builds no index. Its runtime is also flat in `-e`, so flatness in a search
+parameter is not unique to oligoscan; what differs is that oligoscan is flat
+in the **error budget**.
+
+**The sharpest result is the leftmost column, and it is not a recall
+figure.** At `-e -30` RIsearch2 reports 60.8% of *perfectly complementary*
+sites — 505 of 1,287 absent. Its search is fine; those are AU-rich 19-mers
+whose duplexes never reach −30 kcal/mol. **An energy cutoff discriminates by
+base composition, not by complementarity**, so a screen built on one is
+biased toward GC-rich targets, and lowering the threshold to admit AU-rich
+true sites admits everything else in proportion.
+
+**Completeness is not reachable by relaxing the threshold.** From −20 to −10
+recovers ~44,300 sites and adds 4,526,126 interactions matching nothing in
+the budget — about **100 extra interactions per additional true site** —
+while the recall curve flattens (+15.2 then +7.4 points).
+
+Those unmatched interactions are **not errors**: partial duplexes and
+wobble-containing pairings are exactly what RIsearch2 is designed to find and
+oligoscan is not. They are what a user must triage to reach the sites an
+exhaustive gate returns directly.
+
+*Caveat.* The seed specification used here (`-s 2:8/7`) mirrors oligoscan's
+seed region rather than the parameters the RIsearch2 authors recommend in
+their own siRNA off-target pipeline. Those should be measured before these
+figures are called that tool's best configuration.
+
 ## Limitations
 
 - **Oligos 10–64 nt.** The upper bound is Myers' bit-vector needing the
@@ -260,7 +322,7 @@ A manuscript is in preparation. Until then please cite the software; see
 | tool | relation |
 |---|---|
 | [Cas-OFFinder](https://pmc.ncbi.nlm.nih.gov/articles/4016707) | exhaustive mismatch *and* bulge search for short guides, GPU/OpenCL — the closest algorithmic precedent, but CRISPR/PAM-oriented |
-| [RIsearch2](https://pubmed.ncbi.nlm.nih.gov/28108657/) | suffix-array, energy-based large-scale siRNA off-target prediction; seed-and-extend, so heuristic with respect to the full interaction space |
+| [RIsearch2](https://pubmed.ncbi.nlm.nih.gov/28108657/) | suffix-array, energy-based large-scale siRNA off-target prediction; seed-and-extend, so heuristic with respect to the full interaction space — [measured above](#against-risearch2) |
 | bowtie1 / bowtie2 | general read mappers; `-v` is exhaustive but capped at 3 mismatches, and bowtie2's multiseed is heuristic by design |
 
 To our knowledge no existing tool is a transcriptome-aware, seed-structured,
