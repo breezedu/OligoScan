@@ -193,6 +193,47 @@ output. Run `scripts/bench_gates.sh` to reproduce the table.
 
 ### Against bowtie2
 
+Two comparisons, in order of how much weight they carry.
+
+#### At a verified-equivalent gate
+
+The strongest form of the comparison: both tools search **one and the same
+edit sphere**, both are allowed gaps, and the two site sets are compared
+reciprocally at **exact transcript coordinates** rather than by counting.
+bowtie2 is scored with `--score-min C,-k,0` and `--rdg 0,1 --rfg 0,1`, so a
+gap of length N costs exactly N — matching oligoscan's edit model instead of
+bowtie2's default affine penalty, which silently forbids a bulge plus two
+substitutions at budget 3. Ten published 19-nt guides, whole human cDNA,
+20 threads:
+
+| search allowance | oligoscan sites | bowtie2 alignments | bowtie2 recall | bowtie2 precision | oligoscan | bowtie2 |
+|---|---|---|---|---|---|---|
+| ≤2 edits, ≤2 indel bases | 708 | 708 | **100%** | 100% | **2.3 s** | 1,196.6 s |
+| ≤3 edits, ≤3 indel bases | 10,373 | 10,210 | **98.42%** | 99.99% | **2.3 s** | 1,198.0 s |
+| ≤4 edits, ≤4 indel bases | 157,064 | 140,645 | **89.14%** | 99.55% | **2.8 s** | 1,205.6 s |
+
+Sites found only by oligoscan: 0, 164, 17,052 — at the widest gate 73% of
+those carry two or more gap events. Found only by bowtie2: 0, 1, 633. At the
+tightest gate the two agree **exactly**, 708 = 708, with 22 differences that
+are purely representational (a terminal bulge versus a terminal mismatch at
+guide positions 1–2, same locus, same cost).
+
+This is the comparison to quote. It is also where the runtime gap is honest:
+~520× at matched settings, because `-a` with flat gap costs is what exhaustive
+enumeration actually costs bowtie2.
+
+#### Earlier, wider-gate comparison
+
+> **Provenance warning.** The figures below come from `example_oligos.tsv`,
+> which is 40 consecutive 21-nt windows sliding one base at a time across
+> ~60 nt of a single transcript — one sequence sampled 40 times, not 40
+> independent queries. Treat the site counts as indicative only; the ≤6 row
+> in particular runs well above the per-oligo average for that reason. They
+> are kept for continuity and will be replaced by a library-scale re-run.
+> The configuration claim below is also known to be wrong: a seed length one
+> base longer than the "provable" bound scores 22 points higher recall and
+> runs 23% faster, so `-L` needs sweeping rather than deriving.
+
 Same reference, 10 21-mers. bowtie2 is given its best honest configuration,
 not its defaults — which cannot express this search at all: scoring
 flattened to edit distance, `--gbar 1`, `-a` rather than `-k`, `-N 1`, and
