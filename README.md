@@ -1,7 +1,8 @@
 # oligoscan
 
-**Exhaustive, uncapped off-target scanning for short oligonucleotides
-(siRNA / ASO) against cDNA and whole-genome references.**
+**Exhaustive, uncapped off-target enumeration for short oligonucleotides —
+siRNA, antisense oligonucleotide and CRISPR guide RNA — against cDNA,
+pre-mRNA and whole-genome references.**
 
 oligoscan enumerates *every* alignment of an oligo within a chosen mismatch
 and indel budget. There is no mismatch cap, no seeding, no filtering
@@ -14,6 +15,24 @@ bowtie1 -v              yes            cannot           cannot
 bowtie2             heuristic        heuristic        heuristic
 oligoscan             exact            exact            exact
 ```
+
+New here? **[docs/TUTORIAL.md](docs/TUTORIAL.md)** is the walkthrough:
+install, the three workflows, how to read the output, and the conventions
+that change your answer.
+
+## What it is for
+
+Three applications, one scanner. The gate is defined over oligo positions
+rather than over any biological feature of the target, and a reference is
+just a packed two-bit file, so nothing about the method is specific to one
+of these.
+
+| | what it answers | status |
+|---|---|---|
+| **siRNA / ASO off-targets** | every transcript an oligo can bind in a stated budget | exact agreement with `bowtie -v 3`; contains every bowtie2 alignment |
+| **siRNA duplexes** | both strands, because a RISC-loaded passenger strand silences its own off-targets | one command, `scripts/sirna_duplex_screen.py` |
+| **CRISPR guide RNAs** | genome-wide off-target sites, PAM-free then filtered | exact agreement with Cas-OFFinder across 2,355,073 and 12,694,694 sites |
+| **ASOs vs pre-mRNA** | intronic sites no cDNA screen can represent | 90.1% of a 2,361-oligo library's transcribed-orientation sites are intronic |
 
 ## Why
 
@@ -58,6 +77,23 @@ gcc -O3 -march=native -fopenmp -o oligoscan src/oligoscan.c
 `-march=native` targets the building CPU; use `-march=x86-64-v3` (AVX2) for a
 portable binary.
 
+Run `--selftest` after every build. It checks the edit-distance core against
+a brute-force O(mn) dynamic program and verifies that the per-region
+mismatch split sums to the reported total. It needs no input files and takes
+seconds. A build that fails it must not be used — the first build of this
+code disagreed with the DP on 3,531 of 4,000 random trials, and a hit count
+alone would never have shown it.
+
+**CUDA backend** (optional, mismatch gates at 10–32 nt):
+
+```bash
+docker compose build oligoscan-gpu
+docker compose run --rm oligoscan-gpu oligoscan-gpu --version
+```
+
+It reads only packed `.osr` references — run `pack` first. Output is
+byte-identical to the CPU build.
+
 ## Quickstart
 
 ```bash
@@ -66,6 +102,24 @@ portable binary.
 
 A 60 kb bundled reference with planted off-target sites, so this runs in
 under a second with nothing to download. See `examples/README.md`.
+
+**Screening a whole siRNA design set, both strands, one command:**
+
+```bash
+python3 scripts/sirna_duplex_screen.py \
+    --sirna-csv       designs.csv \
+    --ref             ref/Homo_sapiens.GRCh38.cdna.all.osr \
+    --precheck-fasta  ref/Homo_sapiens.GRCh38.cdna.all.fa \
+    --tx2gene         ref/cdna_tx2gene.tsv \
+    --target-gene     PCSK9 \
+    --outdir          screen_out
+```
+
+`designs.csv` needs an ID, a sense and an antisense column; the names are
+auto-detected and `U` is read as `T`. Both strands are screened in one scan,
+each yielding a mismatch-only and an edit-distance summary, and the result is
+one table with a verdict per design naming every criterion it failed.
+`--resume` re-filters at new thresholds without rescanning.
 
 ## Usage
 
@@ -88,9 +142,17 @@ and gated separately:
 
 | region | positions | gate |
 |---|---|---|
-| 5′ terminal base | 1 | counts toward non-seed and total |
+| 5′ terminal base | 1 | **its own region — counts toward the total only, never toward the body** |
 | seed | 2–8 | `maxSeedMM` |
 | body | 9..L | `maxNonseedMM` |
+
+So `total_mm = pos1 + seed_mm + nonseed_mm`, and the output's `seed_mm` and
+`nonseed_mm` columns exclude position 1 entirely. That separability is not
+cosmetic: a position-1 mismatch is conventionally discounted in RISC, and
+because the three regions are gated independently you can recover the
+discounted distance as `seed_mm + nonseed_mm` without rescanning. Nothing
+else in this comparison class exposes that — a `bowtie -v 3` has no notion of
+guide position at all.
 
 `maxTotalEdits` caps mismatches *plus* indel bases. The seed region is an
 siRNA/RISC concept, so for a chemistry where it does not apply — a gapmer
@@ -104,6 +166,33 @@ unconstrained seed.
 
 So the deliverable is not "the cap is now 6". It is *the cap is gone, and
 the gate is what you choose*.
+
+### Conventions that change your answer
+
+Four choices change the result more than most parameters do, and all four
+belong in a methods section. On a complete 3,617-design tiling of PCSK9:
+
+- **Position-1 mismatches.** Discounting them — the field's convention, and
+  the conservative direction, since it can only move off-targets closer —
+  re-tiers 36% of designs and cuts a "clears three mismatches" shortlist
+  from **816 to 189**.
+- **Mismatches vs edits.** Run these as separate analyses. A mismatch-only
+  screen counts mismatches; an indel-permitting screen should count **edits**,
+  an indel and a mismatch each costing one. `edit_total` is already that
+  number, and `edit_total = total_mm + gap_events`. Of the 189 designs above,
+  admitting one indel base leaves **26**.
+- **Low buckets are exact; high ones are floors.** At `maxTotalEdits 4`, a hit
+  4 away excluding position 1 *plus* a position-1 mismatch totals 5 and is
+  outside the gate. So 0–3 are counts and anything above is a lower bound.
+- **Seed matches are a separate axis from total distance.** Across that tiling
+  the correlation between nearest-off-target distance and perfect-seed
+  off-target count is only **r = −0.36**; within the designs clearing three
+  mismatches the perfect-seed count still ranges 0 to 49. Ranking on distance
+  alone admits seed-catastrophic designs.
+
+One scan serves both analyses: `class == mismatch_only` (equivalently
+`gap_events == 0`) is the mismatch-only subset of an indel-permitting run, so
+there is no need to scan twice.
 
 ### Output
 
@@ -158,6 +247,37 @@ cost), one row per locus, transcript-junction safety, and byte-identical
 output from a packed reference and across thread counts. The Docker build
 fails if any of this fails.
 
+### Against Cas-OFFinder
+
+Whole GRCh38 primary assembly. Cas-OFFinder
+searches mismatches and bulges exhaustively for short guides and is the
+closest algorithmic precedent. The configuration deliberately favours it: an
+NGG pattern is its native published case and restricts its candidate set
+roughly sixteen-fold, while oligoscan applies no PAM constraint and must
+enumerate the entire PAM-free neighbourhood and filter afterwards — at four
+mismatches it reports and discards 6,958,129 sites to keep 2,355,073.
+
+500 SpCas9 protospacers, stratified across genomic context and
+error-neighbourhood size, drawn from 1,233 genes, both strands:
+
+```
+3 mismatches :   600,632 of   600,632 sites   agreement exact, both directions
+4 mismatches : 2,355,073 of 2,355,073 sites   agreement exact, both directions
+repeat-derived guides : 12,694,694 sites      agreement exact
+```
+
+Nothing in either tool's exclusive column, and exact agreement within each of
+sixteen context-by-difficulty strata taken separately. Peak memory 3.69 GB
+against 5.67 GB.
+
+**CPU–GPU byte-identity.** The CUDA backend reproduces the CPU output byte
+for byte at every gate and library size tested, up to 37.6 million sites.
+This is evidence about the port, not about the algorithm: the two backends
+share the candidate-handling path, so a defect there passes unnoticed — one
+did, and was caught instead by cross-checking against another tool. It has
+earned its place anyway, having found a four-row deficit in thirty-seven
+million arising from ambiguous-base handling that no other test detected.
+
 ## Performance
 
 Measured on the full Ensembl human cDNA (743 Mb), 40 21-mers, antisense,
@@ -191,6 +311,34 @@ Scaling linearly in oligo count, 1,750 oligos is ~76 s mismatch-only and
 for human cDNA), loading in ~1 s instead of ~20 s, with byte-identical
 output. Run `scripts/bench_gates.sh` to reproduce the table.
 
+### At genome scale, and on GPU
+
+Runtime decomposes into two terms, which is why no single speed multiple is
+quoted: a per-query scan cost and a per-site reporting cost.
+
+```
+oligoscan CPU  : 0.219 s/query + 1.49 us/site
+oligoscan CUDA : 4.07 s fixed + 0.0171 s/query + 1.41 us/site
+Cas-OFFinder   : ~51 s fixed  + 95-128 us/site
+```
+
+The CUDA kernel replaces the Myers scan only; traceback, the region gate and
+selection stay on the host as shared code. So what the GPU is worth depends
+on how much of the work it replaces: **11-15x** at mismatch-only gates where
+the scan is nearly everything, 6-7x with a 3-nt indel, and level with the CPU
+at 4 nt, where traceback is two thirds to four fifths of the work and no
+kernel touches it. The claim is not a single speedup but that the method
+admits acceleration at all, in proportion to the share of the work that is a
+regular map over positions.
+
+Cas-OFFinder's ~51 s of fixed cost amortises across guides, so the margin
+depends entirely on scale: an eight-fold advantage at ten guides is a
+statement about startup latency, while at 500 guides the honest figures are
+1.56x at three mismatches and 2.49x at four. What does generalise is flatness
+in the error budget — raising the gate from three to four mismatches
+multiplied reported sites by 6.14 and cost oligoscan **3.0%** more time,
+against Cas-OFFinder's **64.5%**.
+
 ### Against bowtie2
 
 Two comparisons, in order of how much weight they carry.
@@ -203,20 +351,28 @@ reciprocally at **exact transcript coordinates** rather than by counting.
 bowtie2 is scored with `--score-min C,-k,0` and `--rdg 0,1 --rfg 0,1`, so a
 gap of length N costs exactly N — matching oligoscan's edit model instead of
 bowtie2's default affine penalty, which silently forbids a bulge plus two
-substitutions at budget 3. Ten published 19-nt guides, whole human cDNA,
-20 threads:
+substitutions at budget 3. One hundred published 19-nt guides, whole human
+cDNA, 22 threads (oligoscan 0.9.3):
 
 | search allowance | oligoscan sites | bowtie2 alignments | bowtie2 recall | bowtie2 precision | oligoscan | bowtie2 |
 |---|---|---|---|---|---|---|
-| ≤2 edits, ≤2 indel bases | 708 | 708 | **100%** | 100% | **2.3 s** | 1,196.6 s |
-| ≤3 edits, ≤3 indel bases | 10,373 | 10,210 | **98.42%** | 99.99% | **2.3 s** | 1,198.0 s |
-| ≤4 edits, ≤4 indel bases | 157,064 | 140,645 | **89.14%** | 99.55% | **2.8 s** | 1,205.6 s |
+| ≤2 edits, ≤2 indel bases | 5,773 | 5,734 | **99.32%** | 100% | **14.1 s** | 2,460.1 s |
+| ≤3 edits, ≤3 indel bases | 101,981 | 99,189 | **97.17%** | 99.90% | **15.3 s** | 2,381.2 s |
+| ≤4 edits, ≤4 indel bases | 1,552,873 | 1,358,868 | **87.05%** | 99.48% | **17.2 s** | 2,411.8 s |
 
-Sites found only by oligoscan: 0, 164, 17,052 — at the widest gate 73% of
-those carry two or more gap events. Found only by bowtie2: 0, 1, 633. At the
-tightest gate the two agree **exactly**, 708 = 708, with 22 differences that
-are purely representational (a terminal bulge versus a terminal mismatch at
-guide positions 1–2, same locus, same cost).
+Sites found only by oligoscan: 39, 2,888, 201,022.
+
+**Every bowtie2 alignment is contained in oligoscan's output.** Matching at
+locus level — same guide and transcript, start positions within 8 nt —
+oligoscan accounts for **1,358,868 of 1,358,868** bowtie2 alignments at the
+widest gate, and for all of them at the other two: nothing bowtie2 finds is
+absent from oligoscan's set. The 0, 96 and 7,017 alignments that do not match
+at an *exact* start position are the same loci with the boundary drawn one or
+two bases differently, not sites oligoscan missed.
+
+Times are the scan, which is flat: a **269× rise in sites costs 1.23× more
+time**, while bowtie2 runs 140–175× slower and is flat for its own reason
+(`-a` with flat gap costs dominates).
 
 This is the comparison to quote. It is also where the runtime gap is honest:
 ~520× at matched settings, because `-a` with flat gap costs is what exhaustive
@@ -343,15 +499,29 @@ figures are called that tool's best configuration.
 - **Counts are per transcript, not per gene.** Ensembl cDNA lists every
   isoform, so one genomic site appears once per isoform containing it.
   Collapse to gene level in reporting.
-- **Memory is one byte per reference base during the scan** (~0.8 GB for
-  human cDNA, ~3.1 GB for GRCh38). Scanning the packed 2-bit form directly
-  would quarter it and is not yet implemented.
+- **Memory is one byte per reference base during the CPU scan** (~0.8 GB for
+  human cDNA, ~3.1 GB for GRCh38). The CUDA build scans the packed 2-bit form
+  directly and needs 856 MB for the genome, so that saving is realised there
+  but not yet in the CPU build.
+- **The CUDA build covers mismatch gates only, at 10–32 nt.** Gapped gates on
+  GPU use a separate binary in which the kernel replaces the Myers scan alone,
+  leaving traceback on the host.
+- **Counts are per sequence.** On an isoform-rich annotation one genomic site
+  is counted once per isoform; the genomic runs use the primary assembly,
+  which avoids the same multiple counting across alt haplotypes and patches.
+- **Off-target counts are not comparable across species.** Annotation depth
+  differs several-fold — human 328,868 transcripts, mouse 116,358, cyno
+  51,376, rabbit 41,711 — so the same design shows fewer off-target genes in
+  a less-annotated species for reasons unrelated to safety. Read each species
+  against its own transcriptome. Cross-species *activity* is a different
+  question, answered from the orthologue alone by
+  `scripts/crossreact_scan.py`.
 - **Non-ACGT reference bases count as mismatches**, so a window containing
   `N` is unlikely to pass a tight gate. bowtie1 instead declines to align
   across ambiguous bases; the two agree everywhere else.
 - **No index, so no sub-second single-oligo lookup.** A full-reference scan
   for one oligo is ~2 s.
-- Version 0.9: the interface may still change.
+- Version 0.9.4: the interface may still change.
 
 ## Citation
 
@@ -362,16 +532,19 @@ A manuscript is in preparation. Until then please cite the software; see
 
 | tool | relation |
 |---|---|
-| [Cas-OFFinder](https://pmc.ncbi.nlm.nih.gov/articles/4016707) | exhaustive mismatch *and* bulge search for short guides, GPU/OpenCL — the closest algorithmic precedent, but CRISPR/PAM-oriented |
+| [Cas-OFFinder](https://pmc.ncbi.nlm.nih.gov/articles/4016707) | exhaustive mismatch *and* bulge search for short guides, GPU/OpenCL — the closest algorithmic precedent. [Measured above](#against-cas-offinder): exact agreement across 2,355,073 and 12,694,694 sites. Differs in being PAM-bound, in gating on one total rather than three regions, and in requiring an OpenCL runtime |
 | [RIsearch2](https://pubmed.ncbi.nlm.nih.gov/28108657/) | suffix-array, energy-based large-scale siRNA off-target prediction; seed-and-extend, so heuristic with respect to the full interaction space — [measured above](#against-risearch2) |
 | bowtie1 / bowtie2 | general read mappers; `-v` is exhaustive but capped at 3 mismatches, and bowtie2's multiseed is heuristic by design |
 
 To our knowledge no existing tool is a transcriptome-aware, seed-structured,
-**uncapped** exhaustive scanner covering both siRNA and ASO.
+**uncapped** exhaustive scanner covering siRNA, ASO *and* guide RNA against
+both transcriptomic and genomic references.
 
 ## License
 
 **PolyForm Noncommercial License 1.0.0** — see `LICENSE`.
+
+Repository: <https://github.com/breezedu/OligoScan>
 
 oligoscan is **free of charge for academic and non-profit research**. The
 licence permits use by educational institutions, public research
