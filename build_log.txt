@@ -1,0 +1,177 @@
+OligoScan build Mon 11/23/2026  8:26:27.28 
+Interpreter: C:\Users\JeffDu\AppData\Local\Python\pythoncore-3.14-64\python.exe 
+Collecting pyinstaller
+  Downloading pyinstaller-6.22.3-py3-none-win_amd64.whl.metadata (8.5 kB)
+Collecting flask
+  Downloading flask-3.1.3-py3-none-any.whl.metadata (3.2 kB)
+Collecting altgraph (from pyinstaller)
+  Using cached altgraph-0.17.5-py2.py3-none-any.whl.metadata (7.5 kB)
+Collecting packaging>=22.0 (from pyinstaller)
+  Using cached packaging-26.3-py3-none-any.whl.metadata (3.5 kB)
+Collecting pefile>=2022.5.30 (from pyinstaller)
+  Using cached pefile-2024.8.26-py3-none-any.whl.metadata (1.4 kB)
+Collecting pyinstaller-hooks-contrib>=2026.7 (from pyinstaller)
+  Downloading pyinstaller_hooks_contrib-2026.10-py3-none-any.whl.metadata (16 kB)
+Collecting pywin32-ctypes>=0.2.1 (from pyinstaller)
+  Downloading pywin32_ctypes-0.2.3-py3-none-any.whl.metadata (3.9 kB)
+Collecting setuptools>=42.0.0 (from pyinstaller)
+  Downloading setuptools-84.2.1-py3-none-any.whl.metadata (6.6 kB)
+Collecting blinker>=1.9.0 (from flask)
+  Downloading blinker-1.9.0-py3-none-any.whl.metadata (1.6 kB)
+Collecting click>=8.1.3 (from flask)
+  Downloading click-8.5.1-py3-none-any.whl.metadata (2.6 kB)
+Collecting itsdangerous>=2.2.0 (from flask)
+  Downloading itsdangerous-2.2.0-py3-none-any.whl.metadata (1.9 kB)
+Collecting jinja2>=3.1.2 (from flask)
+  Downloading jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+Collecting markupsafe>=2.1.1 (from flask)
+  Downloading markupsafe-3.0.4-cp314-cp314-win_amd64.whl.metadata (2.8 kB)
+Collecting werkzeug>=3.1.0 (from flask)
+  Downloading werkzeug-3.1.9-py3-none-any.whl.metadata (4.1 kB)
+Downloading pyinstaller-6.22.3-py3-none-win_amd64.whl (1.5 MB)
+   ---------------------------------------- 1.5/1.5 MB 11.5 MB/s  0:00:00
+Downloading flask-3.1.3-py3-none-any.whl (103 kB)
+Downloading blinker-1.9.0-py3-none-any.whl (8.5 kB)
+Downloading click-8.5.1-py3-none-any.whl (126 kB)
+Downloading itsdangerous-2.2.0-py3-none-any.whl (16 kB)
+Downloading jinja2-3.1.6-py3-none-any.whl (134 kB)
+Downloading markupsafe-3.0.4-cp314-cp314-win_amd64.whl (14 kB)
+Using cached packaging-26.3-py3-none-any.whl (129 kB)
+Using cached pefile-2024.8.26-py3-none-any.whl (74 kB)
+Downloading pyinstaller_hooks_contrib-2026.10-py3-none-any.whl (463 kB)
+Downloading pywin32_ctypes-0.2.3-py3-none-any.whl (30 kB)
+Downloading setuptools-84.2.1-py3-none-any.whl (876 kB)
+   ---------------------------------------- 876.3/876.3 kB 9.5 MB/s  0:00:00
+Downloading werkzeug-3.1.9-py3-none-any.whl (228 kB)
+Using cached altgraph-0.17.5-py2.py3-none-any.whl (21 kB)
+Installing collected packages: altgraph, setuptools, pywin32-ctypes, pefile, packaging, markupsafe, itsdangerous, click, blinker, werkzeug, pyinstaller-hooks-contrib, jinja2, pyinstaller, flask
+  WARNING: The scripts pyi-archive_viewer.exe, pyi-bindepend.exe, pyi-grab_version.exe, pyi-makespec.exe, pyi-set_version.exe and pyinstaller.exe are installed in 'C:\Users\JeffDu\AppData\Local\Python\pythoncore-3.14-64\Scripts' which is not on PATH.
+  Consider adding this directory to PATH or, if you prefer to suppress this warning, use --no-warn-script-location.
+  WARNING: The script flask.exe is installed in 'C:\Users\JeffDu\AppData\Local\Python\pythoncore-3.14-64\Scripts' which is not on PATH.
+  Consider adding this directory to PATH or, if you prefer to suppress this warning, use --no-warn-script-location.
+
+Successfully installed altgraph-0.17.5 blinker-1.9.0 click-8.5.1 flask-3.1.3 itsdangerous-2.2.0 jinja2-3.1.6 markupsafe-3.0.4 packaging-26.3 pefile-2024.8.26 pyinstaller-6.22.3 pyinstaller-hooks-contrib-2026.10 pywin32-ctypes-0.2.3 setuptools-84.2.1 werkzeug-3.1.9
+
+[notice] A new release of pip is available: 26.2.1 -> 26.3
+[notice] To update, run: C:\Users\JeffDu\AppData\Local\Python\pythoncore-3.14-64\python.exe -m pip install --upgrade pip
+6.22.3
+Myers bit-vector vs brute-force O(mn) DP, random data
+  ok   (0/4000 disagreements)
+traceback cost vs DP, and region split sums to total
+  ok   (0/2000 disagreements)
+116 INFO: PyInstaller: 6.22.3, contrib hooks: 2026.10
+116 INFO: Python: 3.14.8
+160 INFO: Platform: Windows-11-10.0.26200-SP0
+160 INFO: Python environment: C:\Users\JeffDu\AppData\Local\Python\pythoncore-3.14-64
+162 INFO: Removing temporary files and cleaning cache in C:\Users\JeffDu\AppData\Local\pyinstaller
+163 INFO: Module search paths (PYTHONPATH):
+['C:\\WebUI\\oligoscan',
+ 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\python314.zip',
+ 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\DLLs',
+ 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib',
+ 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64',
+ 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages',
+ 'C:\\WebUI\\oligoscan\\web',
+ 'C:\\WebUI\\oligoscan']
+439 INFO: Appending 'datas' from .spec
+440 INFO: checking Analysis
+440 INFO: Building Analysis because Analysis-00.toc is non existent
+440 INFO: Looking for Python shared library...
+440 INFO: Using Python shared library: C:\Users\JeffDu\AppData\Local\Python\pythoncore-3.14-64\python314.dll
+440 INFO: Running Analysis Analysis-00.toc
+440 INFO: Target bytecode optimization level: 0
+440 INFO: Initializing module dependency graph...
+442 INFO: Initializing module graph hook caches...
+452 INFO: Analyzing modules for base_library.zip ...
+1734 INFO: Processing standard module hook 'hook-encodings.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+2110 INFO: Processing standard module hook 'hook-math.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+2889 INFO: Processing standard module hook 'hook-difflib.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+2901 INFO: Processing standard module hook 'hook-heapq.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+2996 INFO: Processing standard module hook 'hook-pickle.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+4016 INFO: Caching module dependency graph...
+4032 INFO: Analyzing C:\WebUI\oligoscan\web\desktop.py
+4049 INFO: Processing standard module hook 'hook-webbrowser.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+4079 INFO: Processing standard module hook 'hook-sysconfig.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+4082 INFO: Processing standard module hook 'hook-_ctypes.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+4135 INFO: Processing standard module hook 'hook-platform.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+4368 INFO: Processing pre-safe-import-module hook 'hook-typing_extensions.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+4369 INFO: SetuptoolsInfo: initializing cached setuptools info...
+5086 INFO: Processing standard module hook 'hook-cryptography.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+5969 INFO: hook-cryptography: cryptography does not seem to be using dynamically linked OpenSSL.
+6243 INFO: Processing standard module hook 'hook-multiprocessing.util.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+6293 INFO: Processing standard module hook 'hook-xml.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+7126 INFO: Processing standard module hook 'hook-jinja2.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+8122 INFO: Processing pre-safe-import-module hook 'hook-importlib_metadata.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+8122 INFO: Setuptools: 'importlib_metadata' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.importlib_metadata'!
+8126 INFO: Processing standard module hook 'hook-setuptools.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+8139 INFO: Processing pre-safe-import-module hook 'hook-distutils.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+8164 INFO: Processing pre-safe-import-module hook 'hook-jaraco.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+8164 INFO: Setuptools: 'jaraco' appears to be a full setuptools-vendored copy - creating alias to 'setuptools._vendor.jaraco'!
+8173 INFO: Processing pre-safe-import-module hook 'hook-more_itertools.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+8174 INFO: Setuptools: 'more_itertools' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.more_itertools'!
+8281 INFO: Processing standard module hook 'hook-_osx_support.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+8292 INFO: Processing pre-safe-import-module hook 'hook-packaging.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+8487 INFO: Processing standard module hook 'hook-setuptools._vendor.jaraco.text.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+8487 INFO: Processing pre-safe-import-module hook 'hook-importlib_resources.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+8493 INFO: Processing pre-safe-import-module hook 'hook-backports.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+8493 INFO: Setuptools: 'backports' appears to be a full setuptools-vendored copy - creating alias to 'setuptools._vendor.backports'!
+8918 INFO: Processing pre-safe-import-module hook 'hook-tomli.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+8918 INFO: Setuptools: 'tomli' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.tomli'!
+9452 INFO: Processing pre-safe-import-module hook 'hook-wheel.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+9453 INFO: Setuptools: 'wheel' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.wheel'!
+9501 INFO: Processing standard module hook 'hook-setuptools._vendor.importlib_metadata.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+9524 INFO: Processing pre-safe-import-module hook 'hook-zipp.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+9524 INFO: Setuptools: 'zipp' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.zipp'!
+9546 INFO: Processing module hooks (post-graph stage)...
+9832 INFO: Performing binary vs. data reclassification (22 entries)
+9835 INFO: Looking for ctypes DLLs
+9861 INFO: Analyzing run-time hooks ...
+9863 INFO: Including run-time hook 'pyi_rth_inspect.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+9865 INFO: Including run-time hook 'pyi_rth_pkgutil.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+9866 INFO: Including run-time hook 'pyi_rth_multiprocessing.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+9868 INFO: Including run-time hook 'pyi_rth_cryptography_openssl.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\rthooks'
+9868 INFO: Including run-time hook 'pyi_rth_setuptools.py' from 'C:\\Users\\JeffDu\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+9873 INFO: Creating base_library.zip...
+9890 INFO: Looking for dynamic libraries
+10392 INFO: Extra DLL search directories (AddDllDirectory): []
+10392 INFO: Extra DLL search directories (PATH): []
+10582 INFO: Warnings written to C:\WebUI\oligoscan\build_pyi\OligoScan\warn-OligoScan.txt
+10623 INFO: Graph cross-reference written to C:\WebUI\oligoscan\build_pyi\OligoScan\xref-OligoScan.html
+10639 INFO: checking PYZ
+10639 INFO: Building PYZ because PYZ-00.toc is non existent
+10639 INFO: Building PYZ (ZlibArchive) C:\WebUI\oligoscan\build_pyi\OligoScan\PYZ-00.pyz
+10883 INFO: Building PYZ (ZlibArchive) C:\WebUI\oligoscan\build_pyi\OligoScan\PYZ-00.pyz completed successfully.
+10900 INFO: checking PKG
+10900 INFO: Building PKG because PKG-00.toc is non existent
+10900 INFO: Building PKG (CArchive) OligoScan.pkg
+10919 INFO: Building PKG (CArchive) OligoScan.pkg completed successfully.
+10920 INFO: Bootloader C:\Users\JeffDu\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\PyInstaller\bootloader\Windows-64bit-intel\run.exe
+10920 INFO: checking EXE
+10920 INFO: Building EXE because EXE-00.toc is non existent
+10920 INFO: Building EXE from EXE-00.toc
+10920 INFO: Copying bootloader EXE to C:\WebUI\oligoscan\build_pyi\OligoScan\OligoScan.exe
+10928 INFO: Copying icon to EXE
+10936 INFO: Copying 0 resources to EXE
+10936 INFO: Embedding manifest in EXE
+10943 INFO: Appending PKG archive to EXE
+10950 INFO: Fixing EXE headers
+11095 INFO: Building EXE from EXE-00.toc completed successfully.
+11097 INFO: checking COLLECT
+11097 INFO: Building COLLECT because COLLECT-00.toc is non existent
+11097 INFO: Building COLLECT COLLECT-00.toc
+11349 INFO: Building COLLECT COLLECT-00.toc completed successfully.
+11350 INFO: Build complete! The results are available in: C:\WebUI\oligoscan\dist
+PyInstaller exit code: 0 
+ 
+--- dist\OligoScan --- 
+ Volume in drive C is Windows
+ Volume Serial Number is E0F1-09E3
+
+ Directory of C:\WebUI\oligoscan\dist\OligoScan
+
+11/23/2026  08:26 AM    <DIR>          .
+11/23/2026  08:26 AM    <DIR>          ..
+11/23/2026  08:26 AM         6,133,936 OligoScan.exe
+11/23/2026  08:26 AM    <DIR>          _internal
+               1 File(s)      6,133,936 bytes
+               3 Dir(s)  803,618,332,672 bytes free

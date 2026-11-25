@@ -1,0 +1,19 @@
+# reference, indexes, validation output, platform snapshots
+data/
+
+# the internal project handoff: references the deployed platform's modules,
+# production measurements and internal paths. Kept locally, NOT published.
+PROJECT_HANDOFF.md
+
+# frozen pre-selection build and the superseded Stage 2 suite: useful locally
+# for reproducing before/after, not part of the public release
+src/archive/
+
+# build artifacts
+oligoscan
+*.o
+*.osr
+__pycache__/
+*.pyc
+build_pyi/
+dist/

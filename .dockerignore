@@ -1,0 +1,8 @@
+# keep the multi-GB reference and indexes out of the build context
+data/
+*.fa
+*.fa.gz
+.git/
+PROJECT_HANDOFF.md
+__pycache__/
+*.pyc
