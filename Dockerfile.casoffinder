@@ -1,0 +1,88 @@
+# Cas-OFFinder, for the comparison in section "Relation to Cas-OFFinder".
+#
+# TWO VERSIONS, DELIBERATELY, because the provenance problem here is the same
+# one RIsearch2 posed and it has to be handled the same way:
+#
+#   2.4.1     the PUBLISHED tool (Bae, Park & Kim, Bioinformatics 2014).
+#             Mismatches only -- no bulge support.
+#   3.0.0b3   adds DNA/RNA bulges, but its own README says Cas-OFFinder 3
+#             "is not production ready yet" and that results "may differ
+#             from Cas-OFFinder 2".
+#
+# So the mismatch comparison cites 2.4.1 and the bulge comparison cites
+# 3.0.0b3 WITH that caveat stated. Benchmarking a beta and citing the 2014
+# paper would be the same error as benchmarking the RIsearch Rust rewrite
+# and citing Alkan 2017.
+#
+# OpenCL: Cas-OFFinder needs an ICD even to print its usage. The CUDA base
+# supplies the NVIDIA one; pocl is added so CPU mode works too, which is the
+# apples-to-apples arm against oligoscan's CPU build.
+FROM nvidia/cuda:12.6.2-devel-ubuntu24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl unzip python3 python3-numpy \
+        build-essential time \
+        pocl-opencl-icd ocl-icd-libopencl1 clinfo \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG COF2_MD5=17d05080420d4cdee678a4c92bb7ad04
+ARG COF3_MD5=5dc56abe82fc5af4731cd933c23b67e0
+
+RUN cd /tmp \
+ && curl -fsSL -o v2.zip "https://github.com/snugel/cas-offinder/releases/download/2.4.1/cas-offinder_linux_x86-64.zip" \
+ && echo "${COF2_MD5}  v2.zip" | md5sum -c - \
+ && unzip -q v2.zip -d v2 \
+ && find v2 -type f -name cas-offinder -exec install -m0755 {} /usr/local/bin/cas-offinder-2.4.1 \; \
+ && curl -fsSL -o v3.zip "https://github.com/snugel/cas-offinder/releases/download/3.0.0b3/cas-offinder_linux_x86_64.zip" \
+ && echo "${COF3_MD5}  v3.zip" | md5sum -c - \
+ && unzip -q v3.zip -d v3 \
+ && find v3 -type f -name cas-offinder -exec install -m0755 {} /usr/local/bin/cas-offinder-3.0.0b3 \; \
+ && rm -rf /tmp/v2* /tmp/v3* \
+ && test -x /usr/local/bin/cas-offinder-2.4.1 \
+ && test -x /usr/local/bin/cas-offinder-3.0.0b3
+
+RUN mkdir -p /opt/oligoscan \
+ && echo "cas-offinder-2.4.1 (published; mismatches only, md5 ${COF2_MD5})" > /opt/oligoscan/VERSIONS.casoffinder \
+ && echo "cas-offinder-3.0.0b3 (BETA, bulges, md5 ${COF3_MD5})" >> /opt/oligoscan/VERSIONS.casoffinder
+
+# NVIDIA's OpenCL ICD is not shipped in the CUDA devel image, so only pocl's
+# CPU device appears. Register it, and ask the container runtime for the
+# compute capability, so a GPU arm is available if wanted. CPU remains the
+# apples-to-apples arm against oligoscan's CPU build.
+RUN mkdir -p /etc/OpenCL/vendors \
+ && echo "libnvidia-opencl.so.1" > /etc/OpenCL/vendors/nvidia.icd
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+# the CPU build of oligoscan, so both tools run in one container on one
+# reference with one I/O path.
+# WORKDIR first: without it these land at /src, /tests, /scripts and the
+# harness cannot find /opt/oligoscan/tests/huesken_guides.tsv.
+WORKDIR /opt/oligoscan
+COPY src/ src/
+COPY tests/ tests/
+COPY scripts/ scripts/
+ARG CUDA_ARCH=89
+RUN gcc -O3 -march=native -fopenmp -Wall -o /usr/local/bin/oligoscan src/oligoscan.c \
+ && oligoscan --selftest > /dev/null \
+ && oligoscan --version
+
+# the GPU mismatch kernel, so the matrix can carry an oligoscan-GPU arm in
+# the same container as Cas-OFFinder, on one reference and one I/O path
+RUN nvcc -O3 -std=c++17 -arch=sm_${CUDA_ARCH} -Xcompiler -fopenmp \
+        -o /usr/local/bin/oligoscan-gpu src/oligoscan_gpu.cu
+
+# AND the integrated build. oligoscan-gpu is the MISMATCH kernel only and
+# cannot do bulges at all; the indel path on GPU is `oligoscan-cuda --gpu`,
+# whose --gpu flag replaces only the Myers scan so traceback, gate and
+# selection stay the same code as the CPU build. The bulge comparison needs
+# this binary, not the other one.
+RUN nvcc -O3 -std=c++17 -arch=sm_${CUDA_ARCH} -c -o /tmp/myers_gpu.o \
+        src/myers_gpu.cu \
+ && gcc -O3 -march=native -fopenmp -Wall -DOLIGOSCAN_CUDA \
+        -c -o /tmp/oligoscan_cuda.o src/oligoscan.c \
+ && nvcc -arch=sm_${CUDA_ARCH} -o /usr/local/bin/oligoscan-cuda \
+        /tmp/oligoscan_cuda.o /tmp/myers_gpu.o -Xcompiler -fopenmp \
+ && oligoscan-cuda --version
+
+WORKDIR /data

@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+title: "oligoscan: exhaustive uncapped off-target scanning for short oligos"
+message: "If you use this software, please cite it as below."
+type: software
+authors:
+  - family-names: Du
+    given-names: Jeff
+version: 0.9.4
+license: PolyForm-Noncommercial-1.0.0
+repository-code: "https://github.com/breezedu/OligoScan"
+url: "https://github.com/breezedu/OligoScan"
+abstract: >-
+  oligoscan enumerates every alignment of short oligonucleotides (siRNA, ASO;
+  <=64 nt) against cDNA or whole-genome references within a user-chosen
+  mismatch and indel budget. It has no mismatch cap, applies no seeding or
+  filtering heuristic, and reports seed, 5'-terminal and body mismatches
+  separately. Recall is exhaustive by construction and runtime is independent
+  of the error budget.
+keywords:
+  - siRNA
+  - antisense oligonucleotide
+  - off-target prediction
+  - sequence alignment
+  - edit distance

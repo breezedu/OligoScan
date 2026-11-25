@@ -1,0 +1,80 @@
+# Usage (from the repository root):
+#   docker compose build
+#   docker compose run --rm oligoscan build_indexes.sh /data/ref/<cdna>.fa
+#   docker compose run --rm oligoscan            # interactive shell in /data
+#
+# ./data on the host is /data in the container, so the FASTA and the bowtie
+# indexes survive image rebuilds and are visible from Windows.
+services:
+  oligoscan:
+    build:
+      context: .
+      args:
+        MARCH: native
+    image: oligoscan:dev
+    volumes:
+      - ./data:/data
+      # live copies, so script/test edits need no image rebuild
+      # (the compiled oligoscan binary still comes from the build)
+      - ./scripts:/opt/oligoscan/scripts:ro
+      - ./tests:/opt/oligoscan/tests:ro
+    working_dir: /data
+    stdin_open: true
+    tty: true
+    # bowtie-build on ~560 Mb needs several GB; raise Docker Desktop's memory
+    # limit (Settings > Resources, or .wslconfig under WSL2) if it is killed.
+
+  # GPU backend. Needs the NVIDIA Container Toolkit on the host; verify with
+  #   docker run --rm --gpus all nvidia/cuda:12.6.2-base-ubuntu24.04 nvidia-smi
+  # The CPU service above stays the default and the reference implementation:
+  # this image carries BOTH builds so the equivalence test can run them
+  # side by side in one container.
+  #   docker compose run --rm oligoscan-gpu oligoscan-gpu --device
+  #   docker compose run --rm oligoscan-gpu oligoscan-gpu --selftest
+  # Cas-OFFinder plus oligoscan (CPU, mismatch-GPU and integrated CUDA) in
+  # one image, so the comparison runs on one reference with one I/O path.
+  # Declared as a compose service rather than `docker run --gpus all`,
+  # because that is how the GPU is actually visible here -- the plain
+  # docker run reported "NVIDIA Driver was not detected" on 2026-11-17.
+  oligoscan-casoffinder:
+    build:
+      context: .
+      dockerfile: Dockerfile.casoffinder
+      args:
+        CUDA_ARCH: 89
+    image: oligoscan:casoffinder
+    volumes:
+      - ./data:/data
+      - ./scripts:/opt/oligoscan/scripts:ro
+      - ./tests:/opt/oligoscan/tests:ro
+    working_dir: /data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  oligoscan-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+      args:
+        CUDA_ARCH: 89        # Ada (RTX 4000 Ada / L4 / 4090)
+        MARCH: native
+    image: oligoscan:gpu
+    volumes:
+      - ./data:/data
+      - ./scripts:/opt/oligoscan/scripts:ro
+      - ./tests:/opt/oligoscan/tests:ro
+    working_dir: /data
+    stdin_open: true
+    tty: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

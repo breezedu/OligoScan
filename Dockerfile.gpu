@@ -1,0 +1,65 @@
+# oligoscan, GPU backend.
+#
+# The CPU build in Dockerfile stays the default AND the oracle: it has no
+# dependencies beyond a C compiler, and GPU output is required to be
+# byte-identical to it. This image exists only to build and run the CUDA
+# backend; it deliberately also carries the CPU build so the equivalence
+# test can run both inside one container.
+#
+# Requires the NVIDIA Container Toolkit on the host and `--gpus all` at run
+# time. Verified on an RTX 4000 Ada (sm_89), driver 596.51, CUDA 13.2.
+FROM nvidia/cuda:12.6.2-devel-ubuntu24.04
+
+# Compute capability of the target card. sm_89 = Ada (RTX 4000 Ada, L4, 4090).
+# Several may be given: "75;86;89". Kept separate from the CPU image's MARCH,
+# which targets the host CPU.
+ARG CUDA_ARCH=89
+ARG MARCH=native
+
+ENV DEBIAN_FRONTEND=noninteractive
+# bowtie1/bowtie2 are here so the three-way benchmark can run entirely in
+# this image; the CPU image carries them too. ~50 MB against a 7 GB base.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        bowtie bowtie2 \
+        build-essential \
+        python3 python3-numpy \
+        ca-certificates time \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/oligoscan
+COPY src/     src/
+COPY tests/   tests/
+COPY scripts/ scripts/
+RUN chmod +x scripts/*.sh 2>/dev/null; \
+    ln -sf /opt/oligoscan/scripts/*.sh /usr/local/bin/ 2>/dev/null; true
+
+# The CPU build first: it is the reference, and the equivalence test needs it.
+RUN gcc -O3 -march=${MARCH} -fopenmp -Wall -o /usr/local/bin/oligoscan \
+        src/oligoscan.c \
+    && oligoscan --selftest \
+    && python3 tests/test_oligoscan_select.py /usr/local/bin/oligoscan
+
+# Then the GPU build. -lineinfo keeps source lines in the profile without the
+# cost of -G; --ptxas-options=-v prints register and shared-memory use per
+# kernel at build time, which is what decides occupancy.
+RUN nvcc -O3 -std=c++17 -arch=sm_${CUDA_ARCH} -lineinfo --ptxas-options=-v \
+        -Xcompiler -fopenmp \
+        -o /usr/local/bin/oligoscan-gpu src/oligoscan_gpu.cu
+
+# The integrated build: ONE binary whose --gpu flag replaces only the Myers
+# scan, so traceback, the gate and selection are the same code as the CPU
+# path. gcc compiles the C, nvcc the kernel, then they link.
+RUN nvcc -O3 -std=c++17 -arch=sm_${CUDA_ARCH} -c -o /tmp/myers_gpu.o \
+        src/myers_gpu.cu \
+ && gcc -O3 -march=${MARCH} -fopenmp -Wall -DOLIGOSCAN_CUDA \
+        -c -o /tmp/oligoscan_cuda.o src/oligoscan.c \
+ && nvcc -arch=sm_${CUDA_ARCH} -o /usr/local/bin/oligoscan-cuda \
+        /tmp/oligoscan_cuda.o /tmp/myers_gpu.o -Xcompiler -fopenmp \
+ && oligoscan-cuda --version
+
+RUN printf 'cuda: %s\ncpu oligoscan: %s\n' \
+        "$(nvcc --version | tail -2 | head -1)" \
+        "$(oligoscan --version)" > /opt/oligoscan/VERSIONS.gpu
+
+WORKDIR /data
+CMD ["bash"]
