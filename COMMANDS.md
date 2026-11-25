@@ -2,7 +2,7 @@
 
 Every command below is **a single line**. PowerShell does not accept the `\`
 continuations used in bash; if a command wraps in your editor it is still one
-line. Run them from `C:\WebUI\oligoscan`.
+line. Run them from the repository root.
 
 Shared paths, assumed throughout:
 
@@ -153,7 +153,7 @@ Last measured: gapped path, full library, gate `19 19 3 anti 3 3` —
 ---
 
 *Generated 2026-11-16. Paths and timings reflect the state of
-`C:\WebUI\oligoscan` on that date.*
+the repository root on that date.*
 
 ---
 

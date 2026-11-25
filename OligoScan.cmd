@@ -2,7 +2,7 @@
 REM  OligoScan desktop application. Plain Python, no packaging, no bundling,
 REM  nothing for endpoint protection to remove.
 setlocal
-cd /d C:\WebUI\oligoscan
+cd /d "%~dp0"
 where python >nul 2>&1 || ( echo Python not found on PATH. & pause & exit /b 1 )
 python -c "import tkinter" 2>nul || (
   echo tkinter is missing. Re-run the Python installer and tick "tcl/tk and IDLE".

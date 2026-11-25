@@ -17,3 +17,9 @@ __pycache__/
 *.pyc
 build_pyi/
 dist/
+
+# scan output, scratch markers and pre-change backups: local only
+hits.tsv
+_mount_test.txt
+*.bak-pre-*
+build_log.txt

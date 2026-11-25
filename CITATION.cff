@@ -4,7 +4,7 @@ message: "If you use this software, please cite it as below."
 type: software
 authors:
   - family-names: Du
-    given-names: Jeff
+    given-names: Jeff Guangjian
 version: 0.9.4
 license: PolyForm-Noncommercial-1.0.0
 repository-code: "https://github.com/breezedu/OligoScan"

@@ -3,7 +3,7 @@ REM  Prove the Windows engine produces the same answers as the verified Linux
 REM  build -- not just correct arithmetic (--selftest) but correct file I/O,
 REM  .osr loading and output formatting, which selftest never touches.
 setlocal
-cd /d C:\WebUI\oligoscan
+cd /d "%~dp0"
 
 echo Running the demo scan from a FASTA...
 build_win\oligoscan-v2.exe examples\demo_ref.fa examples\demo_oligos.tsv 1 3 4 anti 1 1 > build_win\demo_win_fa.tsv 2>nul

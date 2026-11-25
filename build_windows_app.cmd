@@ -7,7 +7,7 @@ REM  (AppData\Local\Python\bin\python.exe) while code actually runs under
 REM  pythoncore-3.14-64\python.exe. Installing with one and running with the
 REM  other loses the package silently.
 setlocal enabledelayedexpansion
-cd /d C:\WebUI\oligoscan
+cd /d "%~dp0"
 set LOG=build_log.txt
 echo OligoScan build %DATE% %TIME% > %LOG%
 echo Working directory: %CD% >> %LOG%
@@ -57,5 +57,5 @@ if exist dist\OligoScan.exe (
 
 :done
 echo.
-echo  Log: C:\WebUI\oligoscan\build_log.txt
+echo  Log: %~dp0build_log.txt
 endlocal

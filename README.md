@@ -554,7 +554,7 @@ under industry sponsorship is covered.
 
 **Commercial use requires a separate licence.** This includes use by
 pharmaceutical and biotechnology companies, contract research organisations,
-and any for-profit entity. Enquiries: _[contact — open item]_.
+and any for-profit entity. Enquiries: Jeff Du, jeff.g.du@gmail.com.
 
 This is a **source-available** licence, not an open-source one: the
 noncommercial restriction is incompatible with the OSI definition. Source,

@@ -414,4 +414,4 @@ base / 1 indel event. Position-1 mismatches discounted.
 
 ## Citing and contact
 
-See `README.md` for citation. Issues and questions: `[CONTACT — OPEN ITEM]`.
+See `README.md` for citation. Issues and questions: Jeff Du, jeff.g.du@gmail.com.
