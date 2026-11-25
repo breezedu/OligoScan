@@ -1,0 +1,1033 @@
+#!/usr/bin/env python3
+"""OligoScan -- desktop application.
+
+A real window, native file dialogs, no browser and no local server. The
+scanning, parsing and annotation logic lives in web/core.py and is shared
+with nothing else here: this file is only widgets, threads and formatting.
+
+    python oligoscan_app.py
+"""
+import os, queue, sys, threading, time, traceback
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, filedialog, messagebox
+except ImportError:
+    sys.exit("This needs tkinter, which normally ships with Python.\n"
+             "On Windows, re-run the Python installer and tick 'tcl/tk and IDLE'.")
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, "web"))
+import core
+
+# The duplex rows are laid out in columns, so these two labels must be the same
+# width; asserting it here is cheaper than noticing a one-column drift by eye.
+MRNA_PRE  = "    mRNA  5' "
+OLIGO_PRE = "    oligo 3' "
+assert len(MRNA_PRE) == len(OLIGO_PRE)
+
+SETTINGS = None
+def settings_path():
+    return os.path.join(core.DATA_DIR, "settings.json")
+
+def load_settings():
+    global SETTINGS
+    if SETTINGS is None:
+        try:
+            import json
+            with open(settings_path()) as f: SETTINGS = json.load(f)
+        except Exception: SETTINGS = {}
+    return SETTINGS
+
+def save_settings(**kw):
+    import json
+    s = load_settings(); s.update(kw)
+    with open(settings_path(), "w") as f: json.dump(s, f, indent=2)
+
+def engine_ok(p):
+    import subprocess
+    try:
+        return bool(p) and os.path.exists(p) and \
+               subprocess.run([p, "--version"], capture_output=True, timeout=20).returncode == 0
+    except Exception:
+        return False
+
+def find_engine():
+    saved = load_settings().get("engine")
+    if engine_ok(saved): return saved
+    exe = ".exe" if os.name == "nt" else ""
+    import subprocess
+    for tag in ("v3", "v2"):
+        for d in (os.path.join(HERE, "build_win"), HERE, os.path.join(HERE, "build_linux")):
+            p = os.path.join(d, f"oligoscan-{tag}{exe}")
+            if not os.path.exists(p): continue
+            try:
+                if subprocess.run([p, "--version"], capture_output=True, timeout=20).returncode == 0:
+                    return p
+            except Exception: pass
+    for d in (os.path.join(HERE, "build_win"), os.path.join(HERE, "build_linux"), HERE):
+        p = os.path.join(d, f"oligoscan{exe}")
+        if os.path.exists(p): return p
+    return None
+
+
+class App(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("OligoScan — exhaustive off-target enumeration")
+        self.geometry("1180x760"); self.minsize(940, 620)
+        self.q = queue.Queue()
+        eng = find_engine()
+        if eng: core.OLIGOSCAN = eng
+        self.engine = eng
+
+        top = ttk.Frame(self, padding=(10, 8)); top.pack(fill="x")
+        ttk.Label(top, text="OligoScan", font=("Segoe UI", 15, "bold")).pack(side="left")
+        ttk.Label(top, text="  runs entirely on this machine", foreground="#6b7c93").pack(side="left")
+        ttk.Label(top, text=(os.path.basename(eng) if eng else "NO SCAN ENGINE FOUND"),
+                  foreground=("#1e8e5a" if eng else "#c0392b")).pack(side="right")
+
+        self.nb = ttk.Notebook(self); self.nb.pack(fill="both", expand=True, padx=10, pady=(0, 6))
+        self.tab_refs  = RefTab(self.nb, self)
+        self.tab_sirna = ScanTab(self.nb, self, "sirna")
+        self.tab_aso   = ScanTab(self.nb, self, "aso")
+        self.tab_grna  = ScanTab(self.nb, self, "grna")
+        self.nb.add(self.tab_refs,  text="  1 · References  ")
+        self.nb.add(self.tab_sirna, text="  2 · siRNA  ")
+        self.nb.add(self.tab_aso,   text="  3 · ASO  ")
+        self.nb.add(self.tab_grna,  text="  4 · Cas9 gRNA  ")
+
+        self.status = tk.StringVar(value="Ready." if eng else
+                                   "No scan engine found — expected build_win/oligoscan-v2.exe")
+        bar = ttk.Frame(self, padding=(10, 4)); bar.pack(fill="x")
+        ttk.Label(bar, textvariable=self.status, foreground="#6b7c93").pack(side="left")
+        self.prog = ttk.Progressbar(bar, mode="indeterminate", length=160)
+
+        if not eng:
+            messagebox.showerror("No scan engine",
+                "Could not find oligoscan-v2.exe or oligoscan-v3.exe.\n\n"
+                "Expected in build_win/ beside this script.")
+        self.after(120, self.pump)
+
+    # worker threads never touch widgets; they post here and the UI drains it
+    def run_bg(self, fn, done, label):
+        self.status.set(label); self.prog.pack(side="right"); self.prog.start(12)
+        def work():
+            try: self.q.put((done, fn(), None))
+            except Exception as e:
+                self.q.put((done, None, f"{type(e).__name__}: {e}\n\n{traceback.format_exc(limit=3)}"))
+        threading.Thread(target=work, daemon=True).start()
+
+    def pump(self):
+        try:
+            while True:
+                done, res, err = self.q.get_nowait()
+                self.prog.stop(); self.prog.pack_forget()
+                if err:
+                    self.status.set("Failed.")
+                    messagebox.showerror("OligoScan", err)
+                else:
+                    done(res)
+        except queue.Empty:
+            pass
+        self.after(120, self.pump)
+
+    def refresh_refs(self):
+        for t in (self.tab_sirna, self.tab_aso, self.tab_grna): t.reload_refs()
+        self.tab_refs.reload()
+
+
+class RefTab(ttk.Frame):
+    """Point at a FASTA, tag it, pack it once."""
+    def __init__(self, parent, app):
+        super().__init__(parent, padding=12); self.app = app
+        eb = ttk.LabelFrame(self, text=" Scan engine ", padding=10); eb.pack(fill="x")
+        r = ttk.Frame(eb); r.pack(fill="x")
+        self.eng = tk.StringVar(value=app.engine or "")
+        ttk.Label(r, text="oligoscan", width=12).pack(side="left")
+        ttk.Entry(r, textvariable=self.eng).pack(side="left", fill="x", expand=True, padx=(0, 6))
+        ttk.Button(r, text="Locate…", command=self.pick_engine).pack(side="left")
+        self.englbl = ttk.Label(eb, foreground=("#1e8e5a" if app.engine else "#c0392b"),
+            text=("Verified: " + os.path.basename(app.engine)) if app.engine
+                 else "Not found — locate oligoscan-v3.exe or oligoscan-v2.exe")
+        self.englbl.pack(anchor="w", pady=(5, 0))
+
+        box = ttk.LabelFrame(self, text=" Add a reference ", padding=10); box.pack(fill="x", pady=(12, 0))
+        self.fa = tk.StringVar(); self.sp = tk.StringVar(); self.kind = tk.StringVar(value="cdna")
+
+        r = ttk.Frame(box); r.pack(fill="x", pady=3)
+        ttk.Label(r, text="FASTA file", width=12).pack(side="left")
+        ttk.Entry(r, textvariable=self.fa).pack(side="left", fill="x", expand=True, padx=(0, 6))
+        ttk.Button(r, text="Browse…", command=self.pick).pack(side="left")
+
+        r = ttk.Frame(box); r.pack(fill="x", pady=3)
+        ttk.Label(r, text="Species", width=12).pack(side="left")
+        ttk.Entry(r, textvariable=self.sp, width=22).pack(side="left")
+        ttk.Label(r, text="   Kind").pack(side="left")
+        ttk.Combobox(r, textvariable=self.kind, values=["cdna", "genome"],
+                     state="readonly", width=10).pack(side="left", padx=6)
+        ttk.Button(r, text="Pack && add", command=self.pack_it).pack(side="left", padx=10)
+
+        ttk.Label(box, justify="left", foreground="#6b7c93", text=
+            "Packing a genome takes a few minutes and happens once. Keep the .fa and its .fai\n"
+            "beside the .osr: the Cas9 PAM filter reads sequence from them.").pack(anchor="w", pady=(6, 0))
+
+        lb = ttk.LabelFrame(self, text=" References available ", padding=6)
+        lb.pack(fill="both", expand=True, pady=(12, 0))
+        cols = ("label", "species", "kind", "size", "fai", "anno")
+        self.tv = ttk.Treeview(lb, columns=cols, show="headings", height=11)
+        for c, w in zip(cols, (380, 90, 80, 80, 60, 150)):
+            self.tv.heading(c, text=c.upper()); self.tv.column(c, width=w, anchor="w")
+        self.tv.pack(fill="both", expand=True, side="left")
+        ttk.Scrollbar(lb, orient="vertical", command=self.tv.yview).pack(side="right", fill="y")
+        ttk.Button(self, text="Remove selected", command=self.remove).pack(anchor="e", pady=6)
+        self.reload()
+
+    def pick_engine(self):
+        p = filedialog.askopenfilename(title="Locate the oligoscan executable",
+                initialdir=os.path.join(HERE, "build_win") if os.path.isdir(os.path.join(HERE, "build_win")) else HERE,
+                filetypes=[("Executable", "*.exe"), ("All files", "*.*")])
+        if not p: return
+        if not engine_ok(p):
+            messagebox.showerror("OligoScan",
+                f"{os.path.basename(p)} did not answer --version.\n\n"
+                "If this is the AVX2 build on a pre-2015 CPU it will fail that way; "
+                "use oligoscan-v2.exe instead.")
+            return
+        core.OLIGOSCAN = p; self.app.engine = p
+        save_settings(engine=p); self.eng.set(p)
+        self.englbl.config(text="Verified: " + os.path.basename(p), foreground="#1e8e5a")
+        self.app.status.set("Engine set.")
+
+    def pick(self):
+        p = filedialog.askopenfilename(title="Choose a FASTA", initialdir=self.start_dir(),
+                                       filetypes=[("FASTA", "*.fa *.fasta *.fna *.fa.gz"), ("All files", "*.*")])
+        if not p: return
+        self.fa.set(p)
+        low = p.lower()
+        self.kind.set("cdna" if ("cdna" in low or "transcript" in low) else
+                      "genome" if ("primary_assembly" in low or "genome" in low or "toplevel" in low)
+                      else "cdna")
+
+    def start_dir(self):
+        for c in (os.path.join(HERE, "data", "ref"), HERE, os.path.expanduser("~")):
+            if os.path.isdir(c): return c
+        return "/"
+
+    def pack_it(self):
+        fa = self.fa.get().strip()
+        if not os.path.isfile(fa):
+            messagebox.showwarning("OligoScan", "Choose a FASTA file first."); return
+        osr = os.path.splitext(fa)[0] + ".osr"
+        sp, kind = self.sp.get().strip(), self.kind.get()
+        label = (sp + " " if sp else "") + ("genome" if kind == "genome" else "cDNA")
+        if os.path.exists(osr):
+            if not messagebox.askyesno("Already packed",
+                f"{os.path.basename(osr)} already exists.\n\nRegister it without repacking?"):
+                return
+            self._register(fa, osr, sp, kind, label); return
+        import subprocess
+        def job():
+            t0 = time.time()
+            p = subprocess.run([core.OLIGOSCAN, "pack", fa, osr], capture_output=True, text=True)
+            if p.returncode != 0 or not os.path.exists(osr):
+                raise RuntimeError(p.stderr.strip()[-800:] or "pack failed")
+            return (fa, osr, sp, kind, label, round(time.time() - t0, 1))
+        self.app.run_bg(job, lambda r: (self._register(*r[:5]),
+                        self.app.status.set(f"Packed in {r[5]}s.")),
+                        f"Packing {os.path.basename(fa)} — one-time, can take minutes…")
+
+    def _register(self, fa, osr, sp, kind, label, *_):
+        reg = [r for r in core.load_registry() if r.get("osr") != osr]
+        reg.append(dict(label=label, species=sp, kind=kind, osr=osr, fasta=fa,
+                        anno="", genes="", added=time.strftime("%Y-%m-%d %H:%M")))
+        core.save_registry(reg); self.app.refresh_refs()
+        self.app.status.set(f"Registered {label}.")
+
+    def remove(self):
+        s = self.tv.selection()
+        if not s: return
+        osr = self.tv.item(s[0])["tags"][0]
+        core.save_registry([r for r in core.load_registry() if r.get("osr") != osr])
+        self.app.refresh_refs()
+
+    def reload(self):
+        self.tv.delete(*self.tv.get_children())
+        for r in (core.enrich(x) for x in core.load_registry()):
+            self.tv.insert("", "end", tags=(r["osr"],), values=(
+                r.get("label", ""), r.get("species", "—"), r.get("kind", ""),
+                f"{r['size_mb']} MB" if r["exists"] else "MISSING",
+                "yes" if r["has_faidx"] else "no",
+                os.path.basename(r.get("anno", "")) if r["has_anno"] else "—"))
+
+
+class ScanTab(ttk.Frame):
+    def __init__(self, parent, app, mode):
+        super().__init__(parent, padding=12)
+        self.app, self.mode = app, mode
+        m = core.MODES[mode]; self.m = m
+        self.csv_text = None; self.last = None
+
+        top = ttk.LabelFrame(self, text=f" {m['label']} off-target scan ", padding=10)
+        top.pack(fill="x")
+        r = ttk.Frame(top); r.pack(fill="x", pady=3)
+        ttk.Label(r, text="Reference", width=11).pack(side="left")
+        self.ref = ttk.Combobox(r, state="readonly", width=62); self.ref.pack(side="left", padx=(0, 10))
+        self.ref.bind("<<ComboboxSelected>>", lambda e: self.refresh_anno_label())
+        if mode == "sirna":
+            self.both = tk.BooleanVar(value=False)
+            ttk.Checkbutton(r, text="also screen the sense (passenger) strand",
+                            variable=self.both).pack(side="left")
+
+        if mode == "aso":
+            r = ttk.Frame(top); r.pack(fill="x", pady=3)
+            ttk.Label(r, text="GTF", width=11).pack(side="left")
+            self.gtf = tk.StringVar()
+            ttk.Entry(r, textvariable=self.gtf).pack(side="left", fill="x", expand=True, padx=(0, 6))
+            ttk.Button(r, text="Browse…", command=self.pick_gtf).pack(side="left")
+            ttk.Button(r, text="Build annotation", command=self.build_anno).pack(side="left", padx=6)
+            # Building the annotation takes minutes over a 1.8 GB GTF and is a
+            # one-time step per reference, so say plainly whether this
+            # reference already has one rather than leaving the Build button
+            # as the only clue.
+            self.annolbl = ttk.Label(top, justify="left", foreground="#6b7c93")
+            self.annolbl.pack(anchor="w", pady=(4, 0))
+            self.refresh_anno_label()
+
+        r = ttk.Frame(top); r.pack(fill="x", pady=(8, 0))
+        ttk.Label(r, text="Gate", width=11).pack(side="left")
+        self.g = {}
+        # The seed/body split is RISC geometry: Argonaute anchors positions
+        # 2-8 of a loaded guide, so a seed mismatch is worth more than a body
+        # mismatch. An ASO works by RNase H recruitment on a DNA:RNA duplex
+        # and a gRNA by PAM-proximal R-loop formation -- neither has a
+        # position 2-8 seed, so offering those boxes invites a gate that means
+        # nothing. Those modes gate on total edits alone.
+        fields = (("seed", "seed 2–8", m["seed"]), ("body", "body 9+", m["body"]),
+                  ("total", "total MM", m["total"]), ("indel", "indel nt", m["indel"])) \
+                 if mode == "sirna" else \
+                 (("total", "total MM", m["total"]), ("indel", "indel nt", m["indel"]))
+        for key, lab, val in fields:
+            ttk.Label(r, text=lab).pack(side="left", padx=(8, 3))
+            v = tk.StringVar(value="" if val is None else str(val))
+            ttk.Entry(r, textvariable=v, width=5).pack(side="left")
+            self.g[key] = v
+        if mode != "sirna":
+            ttk.Label(r, text="  (no seed/body split — this chemistry has no RISC seed; "
+                              "mismatches are counted over the whole oligo)",
+                      foreground="#6b7c93").pack(side="left", padx=6)
+
+        r = ttk.Frame(top); r.pack(fill="x", pady=(6, 0))
+        ttk.Label(r, text="Detail rows", width=11).pack(side="left")
+        self.cap = tk.StringVar(value=str(core.DETAIL_CAP))
+        ttk.Entry(r, textvariable=self.cap, width=8).pack(side="left")
+        ttk.Label(r, foreground="#6b7c93", text=
+            "  per oligo per strand in the detail file. Closest sites are kept; "
+            "the summary always counts them all.").pack(side="left")
+
+        # The biotype filter selects among TRANSCRIPTS, which exist only on a
+        # cDNA reference. An ASO is screened against pre-mRNA on a genome,
+        # where every hit is genomic sequence and "protein-coding transcript"
+        # is not a property it has; the exon/intron/intergenic context column
+        # is what carries that information instead.
+        self.bio = tk.StringVar(value=core.BIOTYPE_CHOICES[0][1])
+        if mode == "sirna":
+            r = ttk.Frame(top); r.pack(fill="x", pady=(6, 0))
+            ttk.Label(r, text="Count off-", width=11).pack(side="left")
+            ttk.Combobox(r, textvariable=self.bio, state="readonly", width=32,
+                         values=[lbl for _, lbl in core.BIOTYPE_CHOICES]).pack(side="left")
+            ttk.Label(r, foreground="#6b7c93", text=
+                "  targets in — restricting hides sites, it does not remove them; "
+                "the number hidden is reported.").pack(side="left")
+
+        r = ttk.Frame(top); r.pack(fill="x", pady=(6, 0))
+        ttk.Label(r, text="Scan", width=11).pack(side="left")
+        self.trim = tk.StringVar(value="19" if mode == "sirna" else "")
+        ttk.Entry(r, textvariable=self.trim, width=8).pack(side="left")
+        ttk.Label(r, foreground="#6b7c93", text=
+            "  nt of each strand — a length like 19, or a range like 1-19. "
+            "Blank scans the full sequence.").pack(side="left")
+        if mode == "sirna":
+            ttk.Label(top, foreground="#6b7c93", justify="left", text=
+                "A 19/21 duplex carries a 2-nt 3\u2032 overhang on the antisense strand that does not pair\n"
+                "with the target, so scanning the full 21-mer would demand two spurious complementary\n"
+                "bases at every site.").pack(anchor="w", pady=(4, 0))
+
+        r = ttk.Frame(top); r.pack(fill="x", pady=(10, 0))
+        ttk.Button(r, text="▶  Run scan", command=self.run).pack(side="left")
+        ttk.Label(r, text="   On-target gene").pack(side="left")
+        self.gene = tk.StringVar()
+        ttk.Entry(r, textvariable=self.gene, width=16).pack(side="left", padx=5)
+        ttk.Label(r, text="(e.g. PCSK9 — hits in this gene are counted on-target, "
+                          "everything else off-target)", foreground="#6b7c93").pack(side="left")
+        self.btn_summ = ttk.Button(r, text="Export summary…", state="disabled",
+                                   command=lambda: self.export("summary"))
+        self.btn_summ.pack(side="left", padx=(8, 3))
+        self.btn_det = ttk.Button(r, text="Export alignments…", state="disabled",
+                                  command=lambda: self.export("details"))
+        self.btn_det.pack(side="left")
+        if mode == "grna":
+            ttk.Label(r, text="  PAM filtering needs the .fa and .fai beside the .osr",
+                      foreground="#6b7c93").pack(side="left")
+
+        ob = ttk.LabelFrame(self, text=" Oligos — antisense 5′→3′, one per line, or load a CSV ",
+                            padding=6)
+        ob.pack(fill="both", expand=False, pady=(12, 0))
+        bar = ttk.Frame(ob); bar.pack(fill="x")
+        ttk.Button(bar, text="Load CSV…", command=self.load_csv).pack(side="left")
+        self.csvlbl = ttk.Label(bar, text="CSV columns siRNA_ID / Sense_Sequence / Antisense_Sequence "
+                                          "are detected automatically.", foreground="#6b7c93")
+        self.csvlbl.pack(side="left", padx=10)
+        ttk.Button(bar, text="Clear", command=self.clear_oligos).pack(side="right")
+        self.txt = tk.Text(ob, height=8, font=("Consolas", 10), wrap="none")
+        self.txt.pack(fill="both", expand=True, pady=(6, 0))
+
+        rb = ttk.LabelFrame(self, text=" Results ", padding=6)
+        rb.pack(fill="both", expand=True, pady=(12, 0))
+        cols = ["oligo", "strand", "on-target", "on perfect", "off-target",
+                "off perfect", "min off MM", "min off edit", "off 0/1/2/3 MM"]
+        if mode == "aso": cols.append("context")
+        if mode == "grna": cols.append("PAM")
+        self.cols = cols
+        self.tv = ttk.Treeview(rb, columns=cols, show="headings", height=10)
+        widths = {"oligo": 190, "strand": 78, "on-target": 78, "on perfect": 82,
+                  "off-target": 80, "off perfect": 82, "min off MM": 85, "min off edit": 90}
+        for c in cols:
+            self.tv.heading(c, text=c.upper())
+            self.tv.column(c, width=widths.get(c, 170), anchor="w")
+        self.tv.pack(side="left", fill="both", expand=True)
+        ttk.Scrollbar(rb, orient="vertical", command=self.tv.yview).pack(side="right", fill="y")
+        self.menu = tk.Menu(self, tearoff=0)
+        self.menu.add_command(label="Show alignments…", command=self.show_alignments)
+        self.tv.bind("<Button-3>", self._popup)
+        self.tv.bind("<Double-1>", lambda e: self.show_alignments())
+        ttk.Label(rb, foreground="#6b7c93",
+                  text="right-click a row (or double-click) to see each hit drawn as a duplex"
+                  ).pack(side="bottom", anchor="w")
+        self.reload_refs()
+
+    # ── inputs ──
+    def refresh_anno_label(self):
+        """One line: is this reference already annotated, and from which GTF."""
+        if self.mode != "aso" or not hasattr(self, "annolbl"): return   # built later / other tabs
+        try: ref = self.chosen()
+        except Exception: ref = None
+        if not ref:
+            self.annolbl.config(text="Select a reference.", foreground="#6b7c93"); return
+        if ref.get("has_anno"):
+            src = os.path.basename(ref.get("gtf") or "") or "a GTF"
+            n = ""
+            g = ref.get("genes")
+            if g and os.path.exists(g):
+                try:
+                    with open(g) as f: n = f"{sum(1 for _ in f):,} genes · "
+                except OSError: pass
+            self.annolbl.config(
+                text=f"✓  Annotation ready — {n}built from {src}. "
+                     f"No need to rebuild; exonic / intronic / intergenic context will be reported.",
+                foreground="#1e8e5a")
+        else:
+            self.annolbl.config(
+                text="⚠  No annotation on this reference. The scan still runs, but hits cannot be "
+                     "called exonic or intronic —\n    which for an ASO against a genome is most of "
+                     "the point. Choose a GTF above and press Build annotation (one time).",
+                foreground="#b45309")
+
+    def pick_gtf(self):
+        p = filedialog.askopenfilename(title="Choose a GTF", initialdir=self.ref_dir(),
+                                       filetypes=[("GTF", "*.gtf *.gtf.gz"), ("All files", "*.*")])
+        if p: self.gtf.set(p)
+
+    def ref_dir(self):
+        d = os.path.join(HERE, "data", "ref")
+        return d if os.path.isdir(d) else HERE
+
+    def load_csv(self):
+        p = filedialog.askopenfilename(title="Choose a CSV", initialdir=self.ref_dir(),
+                                       filetypes=[("CSV", "*.csv *.tsv *.txt"), ("All files", "*.*")])
+        if not p: return
+        try:
+            with open(p, newline="", encoding="utf-8-sig") as f: text = f.read()
+        except Exception as e:
+            messagebox.showerror("OligoScan", f"Could not read it:\n{e}"); return
+        rows, warn = core.parse_csv_text(text)
+        if not rows:
+            messagebox.showerror("OligoScan", "No usable rows.\n\n" + "\n".join(warn[:6])); return
+        self.csv_text = text
+        self.txt.delete("1.0", "end")
+        self.txt.insert("1.0", "\n".join(f"{r['id']}\t{r['anti']}" for r in rows[:40]) +
+                        (f"\n… and {len(rows)-40} more" if len(rows) > 40 else ""))
+        self.csvlbl.config(text=f"{os.path.basename(p)} — {len(rows)} oligos"
+                                + (f", {len(warn)} skipped" if warn else ""))
+        if warn: messagebox.showwarning("OligoScan", "\n".join(warn[:10]))
+
+    def clear_oligos(self):
+        self.csv_text = None; self.txt.delete("1.0", "end")
+        self.csvlbl.config(text="CSV columns siRNA_ID / Sense_Sequence / Antisense_Sequence "
+                                "are detected automatically.")
+
+    def reload_refs(self):
+        want = "cdna" if self.mode == "sirna" else "genome"
+        self.refs = [core.enrich(r) for r in core.load_registry()
+                     if core.enrich(r)["exists"] and r.get("kind") == want]
+        self.ref["values"] = [f"{r['label']} — {r['size_mb']} MB"
+                              + ("  · annotated" if r["has_anno"] else "") for r in self.refs]
+        if self.refs: self.ref.current(0)
+        else: self.ref.set(f"no {want} reference registered — add one on tab 1")
+        self.refresh_anno_label()
+
+    def chosen(self):
+        i = self.ref.current()
+        return self.refs[i] if (self.refs and 0 <= i < len(self.refs)) else None
+
+    # ── actions ──
+    def build_anno(self):
+        ref, g = self.chosen(), self.gtf.get().strip()
+        if not ref: messagebox.showwarning("OligoScan", "Pick a genome reference first."); return
+        if not os.path.isfile(g): messagebox.showwarning("OligoScan", "Choose a GTF file first."); return
+        import subprocess, re as _re
+        out = os.path.join(core.DATA_DIR, "anno_" + _re.sub(r"\W+", "_", os.path.basename(g))[:50])
+        script = os.path.join(HERE, "scripts", "gtf_to_annotation.py")
+        def job():
+            p = subprocess.run([sys.executable, script, "--gtf", g, "--out", out],
+                               capture_output=True, text=True)
+            if p.returncode != 0: raise RuntimeError((p.stderr or p.stdout)[-900:])
+            reg = core.load_registry()
+            for r in reg:
+                if r.get("osr") == ref["osr"]:
+                    r["anno"] = out + ".npz"; r["genes"] = out + "_genes.tsv"; r["gtf"] = g
+            core.save_registry(reg)
+            return p.stdout.strip().splitlines()[-3:]
+        self.app.run_bg(job, lambda lines: (self.app.refresh_refs(),
+                        self.app.status.set("Annotation built. " + "  ".join(l.strip() for l in lines))),
+                        f"Reading {os.path.basename(g)} — a human GTF takes a couple of minutes…")
+
+    def run(self):
+        ref = self.chosen()
+        if not ref: messagebox.showwarning("OligoScan", "No reference. Add one on tab 1."); return
+        if self.csv_text: oligos, warn = core.parse_csv_text(self.csv_text)
+        else: oligos, warn = core.parse_pasted(self.txt.get("1.0", "end"))
+        if not oligos:
+            messagebox.showwarning("OligoScan", "No valid sequences.\n\n" + "\n".join(warn[:6])); return
+        try:
+            oligos, trim_note, twarn = core.trim_oligos(oligos, self.trim.get())
+        except ValueError as e:
+            messagebox.showerror("OligoScan", str(e)); return
+        warn = list(warn) + twarn
+        if not oligos:
+            messagebox.showwarning("OligoScan",
+                "Nothing left after trimming.\n\n" + "\n".join(warn[:6])); return
+        if warn: messagebox.showwarning("OligoScan", "\n".join(warn[:10]))
+        def num(k, d):
+            v = self.g[k].get().strip()
+            return None if (v == "" and k == "seed") else (int(v) if v else d)
+        total = num("total", self.m["total"])
+        if self.mode == "sirna":
+            gate = dict(seed=num("seed", self.m["seed"]), body=num("body", self.m["body"]),
+                        total=total, indel=num("indel", self.m["indel"]))
+        else:
+            # seed None -> run_oligoscan passes the oligo length, i.e.
+            # unconstrained; body = total leaves the total gate in charge.
+            gate = dict(seed=None, body=total, total=total,
+                        indel=num("indel", self.m["indel"]))
+        strands = ["anti", "sense"] if (self.mode == "sirna" and self.both.get()) else ["anti"]
+
+        anno = genes = None
+        if self.mode == "aso" and ref.get("has_anno"):
+            try:
+                from annotation import Annotation, GeneIndex
+                anno = Annotation(ref["anno"]); genes = GeneIndex(ref["genes"])
+            except Exception as e:
+                messagebox.showwarning("OligoScan", f"Annotation could not be loaded:\n{e}")
+        elif self.mode == "aso":
+            messagebox.showinfo("OligoScan", "No GTF annotation attached to this reference, so hits "
+                                             "will have no exonic/intronic context.")
+        fx = None
+        if ref.get("has_faidx"):
+            try: fx = core.Faidx(ref["fasta"])
+            except Exception: fx = None
+        if self.mode == "grna" and not fx:
+            messagebox.showwarning("OligoScan", "No .fai beside this reference, so the NGG PAM filter "
+                                                "cannot be applied. Every site will be listed.")
+        try:
+            core.DETAIL_CAP = max(1, int(self.cap.get()))
+        except ValueError:
+            messagebox.showerror("OligoScan", "Detail rows must be a whole number."); return
+
+        warn_ram = core.ram_warning(ref)
+        if warn_ram and not messagebox.askyesno("Not enough free memory", warn_ram + "\n\nRun anyway?"):
+            return
+
+        tag = str(int(time.time()))
+        m = self.m
+        gene = self.gene.get().strip()
+        is_genome = (self.mode != "sirna")
+        bio = next((k for k, lbl in core.BIOTYPE_CHOICES if lbl == self.bio.get()), "all")
+        if bio != "all" and not gene:
+            messagebox.showinfo("OligoScan",
+                "Restricting off-targets by biotype without an on-target gene means the "
+                "target's own non-coding transcripts are counted as off-target too.\n\n"
+                "Enter the on-target gene for a clean split.")
+        mode_is_sirna = (self.mode == "sirna")
+        def job():
+            t0 = time.time(); results = {}
+            for which in strands:
+                rows = core.run_oligoscan(tag, ref["osr"], oligos, which, gate, m)
+                by = {o["id"]: [] for o in oligos}
+                seqof = {o["id"]: o[which] for o in oligos}
+                for r in rows:
+                    oid = r["oligo"]
+                    if oid not in by: continue
+                    pos, st, L = int(r["pos"]), r["strand"], len(seqof[oid])
+                    h = dict(seq_id=r["seq_id"], pos=pos, strand=st,
+                             seed_mm=int(r["seed_mm"]), nonseed_mm=int(r["nonseed_mm"]),
+                             total_mm=int(r["total_mm"]), edit_total=int(r["edit_total"]),
+                             gap_events=int(r["gap_events"]),
+                             oligo_bulge=int(r.get("oligo_bulge") or 0),
+                             target_bulge=int(r.get("target_bulge") or 0),
+                             cls=r["class"])
+                    h["pos1_mm"] = h["total_mm"] - h["seed_mm"] - h["nonseed_mm"]
+                    # Discounting a position-1 mismatch is RISC convention: the
+                    # 5' nucleotide of a loaded guide is buried in the MID
+                    # pocket of Argonaute and does not read the target, so the
+                    # field does not count it. An ASO has no Argonaute -- it
+                    # recruits RNase H on a DNA:RNA duplex -- and a gRNA's
+                    # position 1 is the PAM-distal end of the protospacer,
+                    # which is simply the most tolerant position, not an
+                    # uncounted one. Applying the discount there reported a
+                    # 1-mismatch off-target as 0MM, i.e. as a perfect match,
+                    # which is the wrong direction on the one number an ASO
+                    # screen is read for.
+                    if mode_is_sirna:
+                        h["mm"] = h["seed_mm"] + h["nonseed_mm"]
+                        h["edit"] = h["edit_total"] - h["pos1_mm"]
+                    else:
+                        h["mm"] = h["total_mm"]
+                        h["edit"] = h["edit_total"]
+                    if m.get("pam") and fx:
+                        pam = fx.fetch(r["seq_id"], pos + L, pos + L + 3) if st == "+" \
+                              else core.rc(fx.fetch(r["seq_id"], pos - 3, pos))
+                        h["pam"] = pam
+                        if not (len(pam) == 3 and pam[1:] == "GG"): continue
+                    if anno and genes:
+                        gl = genes.all_at(r["seq_id"], pos)
+                        tr = [x for x in gl if x[2] != st]   # transcribed orientation only
+                        if tr:
+                            # Genes overlap -- NOP9, LTB4R2 and CIDEB all cover
+                            # the same 6 kb of chr14 -- so naming only tr[0], the
+                            # first by start coordinate, can label a hit with a
+                            # gene that is not the one the on-target flag was
+                            # decided from. Name them all; the on-target gene is
+                            # put first so the label and the flag agree.
+                            names = [x[0] for x in tr]
+                            h["gene"] = "/".join(names) if len(names) > 1 else names[0]
+                            h["genes_here"] = names
+                            h["context"] = anno.context_stranded(r["seq_id"], pos, pos + L, tr[0][2])
+                        else:
+                            h["gene"] = ""; h["context"] = "not_transcribed_this_orientation"
+                    by[oid].append(h)
+                note = ""
+                if gene:
+                    flat = [h for v in by.values() for h in v]
+                    _, note = core.mark_ontarget(flat, ref, gene, is_genome)
+                    # Put the on-target gene first in a multi-gene label, so a
+                    # row flagged ON-TARGET never reads as another gene's hit.
+                    g_up = gene.strip().upper()
+                    for h in flat:
+                        ns = h.get("genes_here")
+                        if h.get("on_target") and ns and len(ns) > 1:
+                            ns = sorted(ns, key=lambda n: n.upper() != g_up)
+                            h["gene"] = "/".join(ns)
+                if bio != "all":
+                    dropped_total = 0
+                    for oid, v in by.items():
+                        kept, dropped, bnote = core.biotype_filter(v, ref, bio, is_genome)
+                        by[oid] = kept; dropped_total += dropped
+                    if bnote:
+                        note = (note + " · " if note else "") + \
+                               f"{bnote}; {dropped_total:,} site(s) hidden"
+                for v in by.values():
+                    # Within one edit distance the old tie-break was seq_id as a
+                    # STRING, so the detail file -- which is truncated to the
+                    # detail-rows cap -- kept chr1, chr10..chr13 and dropped the
+                    # rest alphabetically. That is a biased sample, not the
+                    # closest sites. Ties now prefer a hit that lands in a gene
+                    # in transcribed orientation: for an ASO those are the
+                    # actionable ones, and intergenic hits are both the bulk and
+                    # the least interesting. Edit distance still leads, so
+                    # "closest first" is unchanged.
+                    def rank(x):
+                        genic = 0 if (x.get("gene") and
+                                      x.get("context") not in ("intergenic", None,
+                                      "not_transcribed_this_orientation")) else 1
+                        return (not x.get("on_target"), x["edit"], genic,
+                                x["mm"], x["seq_id"], x["pos"])
+                    v.sort(key=rank)
+                results[which] = dict(by=by, note=note)
+            return dict(summary=[core.split_summary(o, results, m, gene) for o in oligos],
+                        strands=strands, elapsed=round(time.time() - t0, 1), gate=gate,
+                        ref=dict(ref), gene=gene, trim=trim_note, biotype=self.bio.get(),
+                        note=results[strands[0]].get("note", ""))
+        self.app.run_bg(job, self.show,
+                        f"Scanning {len(oligos)} oligos against {os.path.basename(ref['osr'])}…")
+
+    def show(self, res):
+        self.last = res
+        self.tv.delete(*self.tv.get_children())
+        for si, s in enumerate(res["summary"]):
+            for i, w in enumerate(res["strands"]):
+                d = s["res_" + w]; b = lambda k: d["buckets"].get(f"{k}MM", 0)
+                row = [s["id"] if i == 0 else "", "antisense" if w == "anti" else "sense",
+                       d["on_n"], d["on_perfect"], d["off_n"], d["off_perfect"],
+                       d["min_mm"] if d["min_mm"] is not None else "—",
+                       d["min_edit"] if d["min_edit"] is not None else "—",
+                       f"{b(0)} / {b(1)} / {b(2)} / {b(3)}"]
+                if "context" in self.cols:
+                    row.append(", ".join(f"{k}:{v}" for k, v in sorted(d.get("context", {}).items())))
+                if "PAM" in self.cols:
+                    row.append(sum(1 for h in d["hits"] if h.get("pam")))
+                # tag with the row's own index: .index() would match the first
+                # identical summary, which silently shows the wrong oligo
+                self.tv.insert("", "end", values=row, tags=(f"{si}|{w}",))
+        self.btn_summ.config(state="normal"); self.btn_det.config(state="normal")
+        g = res["gate"]
+        extra = f" · on-target: {res['note']}" if res.get("note") else \
+                ("" if not res.get("gene") else "")
+        if res.get("gene") and "not found" in (res.get("note") or ""):
+            messagebox.showwarning("OligoScan",
+                f"{res['note']}.\n\nEvery hit is being counted as off-target. Check the gene "
+                f"symbol, or for a genomic reference build the GTF annotation on the ASO tab.")
+        tr = f" · scanned {res['trim']}" if res.get("trim") else " · full length"
+        self.app.status.set(f"Done in {res['elapsed']}s · seed {g['seed'] if g['seed'] is not None else 'off'}"
+                            f" / body {g['body']} / total {g['total']} / indel {g['indel']}{tr}{extra}")
+
+    def _popup(self, ev):
+        it = self.tv.identify_row(ev.y)
+        if not it: return
+        self.tv.selection_set(it)
+        try: self.menu.tk_popup(ev.x_root, ev.y_root)
+        finally: self.menu.grab_release()
+
+    def show_alignments(self):
+        sel = self.tv.selection()
+        if not sel or not self.last: return
+        tags = self.tv.item(sel[0]).get("tags") or []
+        if not tags: return
+        idx, which = tags[0].split("|"); idx = int(idx)
+        s_ = self.last["summary"][idx]; d = s_["res_" + which]
+        ref = self.last.get("ref") or {}
+        if not ref.get("has_faidx"):
+            fa = ref.get("fasta")
+            if not (fa and os.path.exists(fa)):
+                messagebox.showwarning("OligoScan",
+                    "Drawing a duplex means reading the target sequence, which needs the "
+                    "FASTA beside the .osr. It was not found for this reference.")
+                return
+            # Ensembl downloads ship no .fai, so build one rather than refusing.
+            if not messagebox.askyesno("OligoScan",
+                    f"This reference has no .fai index, which the viewer needs to read "
+                    f"target sequence.\n\nBuild it now? One pass over "
+                    f"{os.path.basename(fa)} ({os.path.getsize(fa)/1e9:.1f} GB); "
+                    f"it is written once and reused."):
+                return
+            try:
+                core.build_faidx(fa)
+                ref["has_faidx"] = True
+            except Exception as e:
+                messagebox.showerror("OligoScan", f"Could not index the reference:\n{e}")
+                return
+        try: fx = core.Faidx(ref["fasta"])
+        except Exception as e:
+            messagebox.showerror("OligoScan", f"Could not read the reference:\n{e}"); return
+
+        oligo = s_["anti_seq"] if which == "anti" else s_["sense_seq"]
+        win = tk.Toplevel(self); win.title(f"{s_['id']} — {which}-strand alignments")
+        win.geometry("980x640")
+        head = ttk.Frame(win, padding=(10, 8)); head.pack(fill="x")
+        ttk.Label(head, text=f"{s_['id']}  ·  {('antisense' if which=='anti' else 'sense')} strand",
+                  font=("Segoe UI", 11, "bold")).pack(side="left")
+        ttk.Label(head, text=f"   {oligo}   ({len(oligo)} nt)",
+                  font=("Consolas", 10)).pack(side="left")
+        shown = tk.StringVar(value="50")
+        ttk.Label(head, text="   show first").pack(side="left")
+        ttk.Entry(head, textvariable=shown, width=5).pack(side="left")
+        ttk.Button(head, text="Redraw", command=lambda: draw()).pack(side="left", padx=6)
+
+        txt = tk.Text(win, font=("Consolas", 10), wrap="none", padx=10, pady=8)
+        sb = ttk.Scrollbar(win, orient="vertical", command=txt.yview)
+        txt.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y"); txt.pack(fill="both", expand=True)
+        txt.tag_configure("flank", foreground="#9aa7b4")
+        txt.tag_configure("mm", foreground="#c0392b")
+        txt.tag_configure("wob", foreground="#b45309")
+        txt.tag_configure("hdr", foreground="#17263a", font=("Consolas", 10, "bold"))
+        txt.tag_configure("on", foreground="#1e8e5a", font=("Consolas", 10, "bold"))
+        txt.tag_configure("note", foreground="#6b7c93")
+        txt.tag_configure("gap", foreground="#7c3aed", font=("Consolas", 10, "bold"))
+        txt.tag_configure("p1", foreground="#0f766e")
+
+        def draw():
+            txt.config(state="normal"); txt.delete("1.0", "end")
+            try: lim = max(1, int(shown.get()))
+            except ValueError: lim = 50
+            hits = d["hits"][:lim]
+            txt.insert("end", f"{len(hits)} of {d['n']:,} sites, closest first"
+                              f"{'' if d['n'] <= len(d['hits']) else '  (list capped at export setting)'}\n\n",
+                       "note")
+            L = len(oligo)
+            for k, h in enumerate(hits, 1):
+                ot = h.get("on_target")
+                lbl = "ON-TARGET " if ot is True else "off-target"
+                tag = "on" if ot is True else "hdr"
+                txt.insert("end", f"{k}. {lbl}  {h['seq_id']}  pos {h['pos']:,}  strand {h['strand']}"
+                                  f"  ·  {h['mm']} mismatch{'' if h['mm']==1 else 'es'}"
+                                  f"  {h['edit']} edit{'' if h['edit']==1 else 's'}", tag)
+                if h.get("gene"): txt.insert("end", f"  ·  {h['gene']}", tag)
+                if h.get("context"): txt.insert("end", f"  ·  {h['context']}", tag)
+                txt.insert("end", "\n")
+                ob, tb = h.get("oligo_bulge", 0), h.get("target_bulge", 0)
+                gaps, nalt = [], 1
+                if h["gap_events"]:
+                    # A bulged hit spans a different number of target bases than
+                    # the oligo is long, and the engine never says where the gap
+                    # sits -- so the placement is reconstructed and checked
+                    # against all four of its reported numbers.
+                    span = L - ob + tb
+                    lf, site, rf = core.hit_context(fx, h["seq_id"], h["pos"], span, 5)
+                    out = core.render_gapped(oligo, site, h["total_mm"], ob, tb,
+                                             h["gap_events"])
+                    if not out:
+                        txt.insert("end", "    bulged alignment — no gap placement reproduces "
+                                          "the reported counts, so none is drawn; see the detail "
+                                          "CSV for coordinates\n\n", "note")
+                        continue
+                    shown_site, bars, guide, mism, wob, gaps, nalt, flipped = out
+                else:
+                    lf, site, rf = core.hit_context(fx, h["seq_id"], h["pos"], L, 5)
+                    out = core.render_duplex(oligo, site, expect_mm=h["total_mm"])
+                    if not out:
+                        txt.insert("end", "    could not reconcile the drawing with the reported "
+                                          "mismatch count — not drawn\n\n", "note")
+                        continue
+                    shown_site, bars, guide, mism, wob = out[:5]
+                    flipped = out[5]
+                # The flanks follow whichever orientation of the window the
+                # renderer actually paired against -- not the strand sign. The
+                # engine's anti mode already searched the reverse complement,
+                # so a '-' row is normally still drawn on the forward window;
+                # flipping the flanks on the strand alone puts the wrong bases
+                # either side of the site.
+                if flipped: lf, rf = core.rc(rf), core.rc(lf)
+                # The bars must start at the first base of the site, i.e. under
+                # the end of the mRNA label plus the left flank. Deriving the
+                # width from the label itself keeps the three rows in step; a
+                # hand-counted constant does not survive an edit to the label.
+                pad = " " * (len(MRNA_PRE) + len(lf))
+                txt.insert("end", MRNA_PRE)
+                txt.insert("end", lf.lower(), "flank")
+                for i, c in enumerate(shown_site):
+                    tg = "gap" if i in gaps else ("mm" if i in mism
+                         else ("wob" if i in wob else ""))
+                    txt.insert("end", c, tg)
+                txt.insert("end", rf.lower(), "flank"); txt.insert("end", " 3'\n")
+                txt.insert("end", pad)
+                for i, c in enumerate(bars):
+                    txt.insert("end", c, "gap" if c == "~" else
+                               ("mm" if c == "X" else ("wob" if c == ":" else "")))
+                txt.insert("end", "\n")
+                txt.insert("end", OLIGO_PRE + " " * len(lf))
+                # column-wise, never reversed: reversing mirrors every gap and
+                # mismatch to the opposite end of the duplex
+                for i, c in enumerate(core.oligo_row(guide)):
+                    tg = "gap" if i in gaps else ("mm" if i in mism
+                         else ("wob" if i in wob else ""))
+                    txt.insert("end", c, tg)
+                txt.insert("end", " 5'\n")
+                # Mark position 1 when its mismatch is the one the header
+                # discounts, so two X's under "1 mismatch" reads as the
+                # convention rather than as a contradiction.
+                p1 = core.pos1_column(guide)
+                # only siRNA discounts position 1, so only there does the
+                # drawing need to explain a count that looks one short
+                if self.mode == "sirna" and h.get("pos1_mm") and p1 is not None:
+                    txt.insert("end", " " * (len(MRNA_PRE) + len(lf) + p1))
+                    txt.insert("end", "\u2191 pos 1\n", "p1")
+                legend = ["grey = \u00b15 nt flanking context"]
+                if mism: legend.append("X = mismatch")
+                if wob:  legend.append(": = G:U wobble, counted as a mismatch")
+                if gaps: legend.append("~ = bulge (- is the unpaired strand)")
+                if self.mode == "sirna" and h.get("pos1_mm") and p1 is not None:
+                    legend.append("position 1 is excluded from the counts above")
+                txt.insert("end", "    " + "   ".join(legend) + "\n", "note")
+                if nalt > 1:
+                    atleast = "at least " if nalt >= core.GAP_SOLUTION_CAP else ""
+                    txt.insert("end", f"    the bulge has {atleast}{nalt} equally valid positions "
+                                      f"here — a gap inside a repeat can slide, and the counts "
+                                      f"do not pin it down; one is shown\n", "note")
+                txt.insert("end", "\n")
+            txt.config(state="disabled")
+        draw()
+
+    def export(self, which):
+        """Summary and detail are separate files because they answer different
+        questions and have very different sizes: the summary is one row per
+        oligo and is what a selection decision is made from; the detail file is
+        every individual site and on a genome scan can be orders of magnitude
+        larger. Exporting them separately means a quick look at the summary
+        does not wait on, or get buried by, the detail file."""
+        if not self.last: return
+        import csv as _csv
+        gene = self.last.get("gene", "")
+        is_det = (which == "details")
+        path = filedialog.asksaveasfilename(
+            title="Save alignment details" if is_det else "Save summary",
+            defaultextension=".csv",
+            initialfile=f"oligoscan_{self.mode}_{'details' if is_det else 'summary'}.csv",
+            filetypes=[("CSV", "*.csv")])
+        if not path: return
+        try:
+            if is_det:
+                self._write_details(path, gene, _csv)
+                rows, note = self.detail_note()
+                self.app.status.set(f"Wrote {os.path.basename(path)}")
+                messagebox.showinfo("OligoScan",
+                    f"Alignment details written:\n\n{path}\n   one row per site  ({rows}){note}")
+            else:
+                self._write_summary(path, gene, _csv)
+                n = len(self.last["summary"])
+                self.app.status.set(f"Wrote {os.path.basename(path)}")
+                messagebox.showinfo("OligoScan",
+                    f"Summary written:\n\n{path}\n   one row per oligo  ({n:,} oligos)\n\n"
+                    f"Counts here are over EVERY site found, not only the ones the detail "
+                    f"file keeps.")
+        except Exception as e:
+            messagebox.showerror("Export failed",
+                f"{type(e).__name__}: {e}\n\n"
+                f"A partial file may have been written to:\n{path}\n\n"
+                + traceback.format_exc(limit=4))
+            self.app.status.set("Export failed.")
+
+    def detail_note(self):
+        """How many rows the detail file holds, and what the cap left out."""
+        per = {}
+        for w_ in self.last["strands"]:
+            per[w_] = sum(len(s_["res_" + w_]["hits"]) for s_ in self.last["summary"])
+        trunc = sum(s_["res_" + w_].get("truncated", 0)
+                    for s_ in self.last["summary"] for w_ in self.last["strands"])
+        capped = sum(1 for s_ in self.last["summary"] for w_ in self.last["strands"]
+                     if s_["res_" + w_].get("truncated", 0))
+        rows = "  ".join(f"{('antisense' if k == 'anti' else 'sense')}: {v:,} rows"
+                         for k, v in per.items())
+        note = ""
+        if trunc:
+            note = (f"\n\nCAPPED at {core.DETAIL_CAP:,} rows per oligo per strand. "
+                    f"{capped} oligo/strand group(s) hit the cap and {trunc:,} more distant "
+                    f"sites were not written.\nThe kept rows are the closest ones, and within "
+                    f"one edit distance a hit inside a gene is kept before an intergenic one. "
+                    f"The summary counts every site, so the two files will not add up — that "
+                    f"is expected.\nRaise 'Detail rows' to write more.")
+        return rows, note
+
+    def _write_details(self, det, gene, _csv):
+        """Every individual site. Truncated to the detail-rows cap."""
+
+        with open(det, "w", newline="", encoding="utf-8-sig") as f:
+            w = _csv.writer(f)
+            w.writerow(["oligo", "strand_screened", "sequence_scanned", "sequence_input",
+                        "on_target", "seq_id",
+                        "pos_0based", "ref_strand", "class", "seed_mm", "nonseed_mm",
+                        "pos1_mm", "mismatches_excl_pos1", "edits_excl_pos1",
+                        "edit_total_raw", "gap_events",
+                        "pam", "gene", "context"])
+            for s_ in self.last["summary"]:
+                for which in self.last["strands"]:
+                    d = s_["res_" + which]
+                    for h in d["hits"]:
+                        ot = h.get("on_target")
+                        w.writerow([s_["id"], which,
+                                    s_["anti_seq"] if which == "anti" else s_["sense_seq"],
+                                    s_["anti_input"] if which == "anti" else s_["sense_input"],
+                                    "" if ot is None else ("yes" if ot else "no"),
+                                    h["seq_id"], h["pos"], h["strand"], h["cls"], h["seed_mm"],
+                                    h["nonseed_mm"], h["pos1_mm"], h["mm"], h["edit"],
+                                    h["edit_total"], h["gap_events"], h.get("pam", ""), h.get("gene", ""),
+                                    h.get("context", "")])
+
+        return
+
+    def _write_summary(self, summ, gene, _csv):
+        """One row per oligo -- what a selection decision is made from.
+
+        Counts here are over ALL sites, not just the ones the detail
+        file kept, so the two files are not expected to add up."""
+        with open(summ, "w", newline="", encoding="utf-8-sig") as f:
+            w = _csv.writer(f)
+            strands = self.last["strands"]
+            has_sense = "sense" in strands
+            trim = self.last.get("trim") or "full length"
+
+            # section 1 reproduces the input columns verbatim where a CSV was
+            # loaded, so the report is traceable back to what was supplied
+            in_cols = list(core.CSV_COLUMNS) if (self.csv_text and core.CSV_COLUMNS) else []
+            if in_cols:
+                sec1 = in_cols + ["scanned_region", "target_gene", "offtarget_scope"]
+            else:
+                sec1 = ["siRNA_ID", "Antisense_Sequence", "Sense_Sequence",
+                        "scanned_region", "target_gene", "offtarget_scope"]
+
+            def strand_cols(pre):
+                c = [f"{pre}_scanned_sequence", f"{pre}_on_target_sites",
+                     f"{pre}_on_target_perfect", f"{pre}_off_target_sites",
+                     f"{pre}_off_target_perfect", f"{pre}_min_offtarget_MM",
+                     f"{pre}_min_offtarget_edits",
+                     f"{pre}_off_0MM", f"{pre}_off_1MM", f"{pre}_off_2MM",
+                     f"{pre}_off_3MM", f"{pre}_off_4plusMM",
+                     f"{pre}_off_1edit", f"{pre}_off_2edit", f"{pre}_off_3edit",
+                     f"{pre}_off_4plus_edit"]
+                if self.mode == "aso": c.append(f"{pre}_off_target_context")
+                return c
+
+            sec2 = strand_cols("AS")
+            sec3 = strand_cols("SS") if has_sense else []
+
+            banner = (["siRNA information"] + [""] * (len(sec1) - 1)
+                      + ["antisense strand - off-target"] + [""] * (len(sec2) - 1))
+            if has_sense:
+                banner += ["sense (passenger) strand - off-target"] + [""] * (len(sec3) - 1)
+            w.writerow(banner)
+            w.writerow(sec1 + sec2 + sec3)
+
+            def strand_vals(d, scanned):
+                b = d["buckets"]
+                v = [scanned, d["on_n"], d["on_perfect"], d["off_n"], d["off_perfect"],
+                     "" if d["min_mm"] is None else d["min_mm"],
+                     "" if d["min_edit"] is None else d["min_edit"],
+                     b.get("0MM", 0), b.get("1MM", 0), b.get("2MM", 0),
+                     b.get("3MM", 0), b.get("4MM", 0),
+                     b.get("1ED", 0), b.get("2ED", 0), b.get("3ED", 0), b.get("4ED", 0)]
+                if self.mode == "aso":
+                    v.append("; ".join(f"{k}:{n}" for k, n in sorted(d.get("context", {}).items())))
+                return v
+
+            scope = self.last.get("biotype", "All transcripts")
+            for s_ in self.last["summary"]:
+                raw = s_.get("raw") or {}
+                if in_cols:
+                    row = [raw.get(c, "") for c in in_cols] + [trim, gene, scope]
+                else:
+                    row = [s_.get("id", ""), s_.get("anti_input", s_.get("anti_seq", "")),
+                           s_.get("sense_input", s_.get("sense_seq", "")), trim, gene, scope]
+                row += strand_vals(s_["res_anti"], s_.get("anti_seq", ""))
+                if has_sense:
+                    if "res_sense" not in s_:
+                        raise RuntimeError(
+                            "the sense-strand results are missing from this run. "
+                            "Re-run the scan with the passenger-strand box ticked.")
+                    row += strand_vals(s_["res_sense"], s_.get("sense_seq", ""))
+                w.writerow(row)
+
+        return
+
+
+if __name__ == "__main__":
+    App().mainloop()
